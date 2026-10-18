@@ -14,9 +14,9 @@
 <style>
 :root{
   --ground:#e9ebe9; --surface:#ffffff; --surface-2:#dfe2df; --sunk:#f3f5f3;
-  --ink:#15181a; --ink-2:#3f4549; --muted:#646b6f; --line:#cbd0cd;
+  --ink:#15181a; --ink-2:#3f4549; --muted:#60666a; --line:#cbd0cd;
   --accent:#b45309; --accent-ink:#ffffff; --accent-soft:#f6e8d8;
-  --ok:#17683f; --warn:#8a6100; --bad:#9b2219;
+  --ok:#17683f; --warn:#8a6100; --bad:#9b2219; --bad-ink:#ffffff;
   --r:3px;
   --f-sign:"Oswald","Arial Narrow",Arial,sans-serif;
   --f-body:"IBM Plex Sans","Helvetica Neue",Arial,sans-serif;
@@ -25,16 +25,16 @@
 @media (prefers-color-scheme:dark){
   :root:not([data-theme="light"]){
     --ground:#15181a; --surface:#1e2225; --surface-2:#272c30; --sunk:#171b1d;
-    --ink:#e7eaec; --ink-2:#b0b7bb; --muted:#848d92; --line:#333a3e;
+    --ink:#e7eaec; --ink-2:#b0b7bb; --muted:#868f94; --line:#333a3e;
     --accent:#e8921f; --accent-ink:#1a1206; --accent-soft:#3a2a10;
-    --ok:#5bbd86; --warn:#d6a53c; --bad:#e2766c;
+    --ok:#5bbd86; --warn:#d6a53c; --bad:#e2766c; --bad-ink:#2a0b08;
   }
 }
 :root[data-theme="dark"]{
   --ground:#15181a; --surface:#1e2225; --surface-2:#272c30; --sunk:#171b1d;
-  --ink:#e7eaec; --ink-2:#b0b7bb; --muted:#848d92; --line:#333a3e;
+  --ink:#e7eaec; --ink-2:#b0b7bb; --muted:#868f94; --line:#333a3e;
   --accent:#e8921f; --accent-ink:#1a1206; --accent-soft:#3a2a10;
-  --ok:#5bbd86; --warn:#d6a53c; --bad:#e2766c;
+  --ok:#5bbd86; --warn:#d6a53c; --bad:#e2766c; --bad-ink:#2a0b08;
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--f-body);
@@ -93,7 +93,7 @@ button{font-family:var(--f-sign);text-transform:uppercase;letter-spacing:.06em;f
 button:hover{border-color:var(--ink-2)}
 button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);
   font-weight:500}
-button.primary.live{background:var(--bad);border-color:var(--bad);color:#fff}
+button.primary.live{background:var(--bad);border-color:var(--bad);color:var(--bad-ink)}
 button:disabled{opacity:.45;cursor:not-allowed}
 button:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
