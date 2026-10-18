@@ -1,0 +1,16 @@
+{
+  "name": "Where Did I Park",
+  "short_name": "Parked",
+  "description": "Works out where you parked from your speed and position, and points you back.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#15181a",
+  "theme_color": "#15181a",
+  "icons": [
+    {"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
+    {"src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ]
+}

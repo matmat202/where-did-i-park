@@ -1,0 +1,456 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Where Did I Park</title>
+<meta name="description" content="Infers where you parked from your speed and position, and points you back. Nothing leaves your phone.">
+<meta name="theme-color" content="#15181a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Parked">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Oswald:wght@400;500;600&display=swap">
+<style>
+:root{
+  --ground:#e9ebe9; --surface:#ffffff; --surface-2:#dfe2df; --sunk:#f3f5f3;
+  --ink:#15181a; --ink-2:#3f4549; --muted:#6e7579; --line:#cbd0cd;
+  --accent:#b45309; --accent-ink:#ffffff; --accent-soft:#f6e8d8;
+  --ok:#17683f; --warn:#8a6100; --bad:#9b2219;
+  --r:3px;
+  --f-sign:"Oswald","Arial Narrow",Arial,sans-serif;
+  --f-body:"IBM Plex Sans","Helvetica Neue",Arial,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#15181a; --surface:#1e2225; --surface-2:#272c30; --sunk:#171b1d;
+    --ink:#e7eaec; --ink-2:#b0b7bb; --muted:#848d92; --line:#333a3e;
+    --accent:#e8921f; --accent-ink:#1a1206; --accent-soft:#3a2a10;
+    --ok:#5bbd86; --warn:#d6a53c; --bad:#e2766c;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#15181a; --surface:#1e2225; --surface-2:#272c30; --sunk:#171b1d;
+  --ink:#e7eaec; --ink-2:#b0b7bb; --muted:#848d92; --line:#333a3e;
+  --accent:#e8921f; --accent-ink:#1a1206; --accent-soft:#3a2a10;
+  --ok:#5bbd86; --warn:#d6a53c; --bad:#e2766c;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--f-body);
+  font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+.wrap{max-width:720px;margin:0 auto;padding-inline:18px;padding-block:26px 50px}
+h1{font-family:var(--f-sign);font-weight:600;font-size:clamp(26px,5.6vw,36px);margin:0;
+  letter-spacing:.012em;text-transform:uppercase;line-height:1.04;text-wrap:balance}
+h1 em{font-style:normal;color:var(--accent)}
+.tagline{color:var(--muted);font-size:13.5px;margin:7px 0 0;max-width:58ch}
+
+/* ---------- the answer ---------- */
+.answer{margin-top:20px;background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--r);overflow:hidden}
+.answer .body{display:flex;gap:20px;align-items:center;padding:20px 18px}
+.dial{flex:0 0 auto;width:104px;height:104px;position:relative}
+.dial svg{display:block;width:100%;height:100%}
+.needle{transform-origin:50% 50%;transition:transform .5s cubic-bezier(.3,.9,.3,1)}
+@media (prefers-reduced-motion:reduce){.needle{transition:none}}
+.reading{min-width:0;flex:1}
+.dist{font-family:var(--f-mono);font-weight:600;font-size:clamp(30px,8vw,46px);
+  line-height:1;letter-spacing:-.025em;font-variant-numeric:tabular-nums}
+.dist small{font-size:.4em;font-weight:500;color:var(--muted);margin-left:5px;letter-spacing:0}
+.compass{font-family:var(--f-sign);text-transform:uppercase;letter-spacing:.07em;
+  font-size:14px;color:var(--accent);margin-top:5px}
+.sincewhen{color:var(--muted);font-size:12.5px;margin-top:7px;font-variant-numeric:tabular-nums}
+.answer .strip{background:var(--sunk);border-top:1px solid var(--line);padding:9px 18px;
+  font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:4px 16px}
+.answer.none .dist{color:var(--muted);font-size:clamp(19px,4.6vw,24px);font-family:var(--f-body);
+  font-weight:500;letter-spacing:0}
+
+/* ---------- live instruments ---------- */
+.panel{margin-top:16px;background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--r)}
+.panel > h2{font-family:var(--f-sign);font-weight:500;text-transform:uppercase;
+  letter-spacing:.09em;font-size:12px;color:var(--muted);margin:0;
+  padding:11px 16px 9px;border-bottom:1px solid var(--line)}
+.gauges{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr))}
+.gauge{padding:12px 16px;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
+.gauge:last-child{border-right:none}
+.gauge dt{font-family:var(--f-sign);text-transform:uppercase;letter-spacing:.08em;
+  font-size:10.5px;color:var(--muted)}
+.gauge dd{margin:3px 0 0;font-family:var(--f-mono);font-size:19px;font-weight:500;
+  font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.state{font-family:var(--f-sign)!important;text-transform:uppercase;letter-spacing:.05em;
+  font-size:17px!important}
+.state.driving{color:var(--accent)} .state.cycling{color:var(--warn)}
+.state.walking{color:var(--ok)} .state.stationary{color:var(--ink-2)}
+.state.unknown{color:var(--muted)}
+.q-good{color:var(--ok)} .q-ok{color:var(--warn)} .q-bad{color:var(--bad)}
+
+/* ---------- controls ---------- */
+.actions{display:flex;flex-wrap:wrap;gap:8px;padding:14px 16px}
+button{font-family:var(--f-sign);text-transform:uppercase;letter-spacing:.06em;font-size:13px;
+  padding:9px 15px;border-radius:var(--r);border:1px solid var(--line);background:var(--surface-2);
+  color:var(--ink);cursor:pointer}
+button:hover{border-color:var(--ink-2)}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);
+  font-weight:500}
+button.primary.live{background:var(--bad);border-color:var(--bad);color:#fff}
+button:disabled{opacity:.45;cursor:not-allowed}
+button:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ---------- log ---------- */
+.log{list-style:none;margin:0;padding:0;max-height:260px;overflow-y:auto}
+.log li{display:flex;gap:11px;padding:8px 16px;border-bottom:1px solid var(--sunk);font-size:13px}
+.log time{font-family:var(--f-mono);color:var(--muted);flex:0 0 auto;font-size:12px}
+.log .k{font-family:var(--f-sign);text-transform:uppercase;letter-spacing:.05em;font-size:11px;
+  flex:0 0 66px;color:var(--muted)}
+.log .k.park{color:var(--ok)} .log .k.cancel{color:var(--bad)} .log .k.candidate{color:var(--warn)}
+.log .msg{flex:1;min-width:0;overflow-wrap:anywhere;color:var(--ink-2)}
+.log:empty::after{content:"Nothing recorded yet.";display:block;padding:16px;color:var(--muted);
+  font-size:13px}
+
+details.how{margin-top:16px;background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--r)}
+details.how > summary{cursor:pointer;padding:11px 16px;font-family:var(--f-sign);
+  text-transform:uppercase;letter-spacing:.09em;font-size:12px;color:var(--muted)}
+details.how .inner{padding:0 16px 14px;font-size:13.5px;color:var(--ink-2)}
+details.how p{margin:9px 0;max-width:64ch}
+details.how code{font-family:var(--f-mono);font-size:12.5px;background:var(--sunk);
+  padding:1px 4px;border-radius:2px}
+details.how b{color:var(--ink)}
+.banner{margin-top:16px;padding:11px 14px;border-radius:var(--r);font-size:13px;
+  border:1px solid var(--line);border-left:3px solid var(--accent);background:var(--accent-soft);
+  color:var(--ink)}
+@media (max-width:460px){
+  /* time + kind on one line, the message on its own, instead of a 3-column crush */
+  .log li{flex-wrap:wrap;gap:4px 10px}
+  .log .k{flex:0 0 auto}
+  .log .msg{flex:1 0 100%}
+  .answer .body{gap:14px}
+  .dial{width:82px;height:82px}
+}
+footer{margin-top:26px;padding-top:14px;border-top:1px solid var(--line);font-size:12px;
+  color:var(--muted)}
+footer p{margin:5px 0;max-width:62ch}
+a{color:var(--accent)}
+</style>
+
+<div class="wrap">
+  <h1>Where did I <em>park</em></h1>
+  <p class="tagline">Watches your speed and works out the moment you stopped driving and
+     walked away. Nothing leaves the phone — positions stay in this browser.</p>
+
+  <section class="answer none" id="answer">
+    <div class="body">
+      <div class="dial" aria-hidden="true">
+        <svg viewBox="0 0 104 104">
+          <circle cx="52" cy="52" r="48" fill="none" stroke="var(--line)" stroke-width="1.5"/>
+          <circle cx="52" cy="52" r="38" fill="none" stroke="var(--sunk)" stroke-width="1"/>
+          <g stroke="var(--muted)" stroke-width="1.5">
+            <line x1="52" y1="6" x2="52" y2="14"/><line x1="52" y1="90" x2="52" y2="98"/>
+            <line x1="6" y1="52" x2="14" y2="52"/><line x1="90" y1="52" x2="98" y2="52"/>
+          </g>
+          <text x="52" y="24" text-anchor="middle" fill="var(--muted)"
+                font-family="Oswald, sans-serif" font-size="9" letter-spacing="1">N</text>
+          <g class="needle" id="needle">
+            <polygon points="52,16 60,60 52,53 44,60" fill="var(--accent)"/>
+          </g>
+          <circle cx="52" cy="52" r="3.5" fill="var(--surface)" stroke="var(--ink-2)" stroke-width="1.5"/>
+        </svg>
+      </div>
+      <div class="reading">
+        <div class="dist" id="dist">Not recorded yet</div>
+        <div class="compass" id="compass"></div>
+        <div class="sincewhen" id="sincewhen">Start tracking before you drive, or mark the spot by hand.</div>
+      </div>
+    </div>
+    <div class="strip" id="strip"><span>No parking event stored.</span></div>
+  </section>
+
+  <section class="panel">
+    <h2>Live sensors</h2>
+    <dl class="gauges">
+      <div class="gauge"><dt>Motion</dt><dd class="state unknown" id="g-state">—</dd></div>
+      <div class="gauge"><dt>Speed</dt><dd id="g-speed">—</dd></div>
+      <div class="gauge"><dt>GPS error</dt><dd id="g-acc">—</dd></div>
+      <div class="gauge"><dt>Fixes</dt><dd id="g-fixes">0</dd></div>
+    </dl>
+    <div class="actions">
+      <button class="primary" id="btn-track" type="button">Start tracking</button>
+      <button id="btn-mark" type="button">Mark spot now</button>
+      <button id="btn-demo" type="button">Replay a sample drive</button>
+      <button id="btn-clear" type="button">Forget spot</button>
+    </div>
+  </section>
+
+  <section class="panel" style="margin-top:16px">
+    <h2>Event log</h2>
+    <ul class="log" id="log"></ul>
+  </section>
+
+  <div class="banner" id="banner" hidden></div>
+
+  <details class="how">
+    <summary>How it decides you parked</summary>
+    <div class="inner">
+      <p>A car stopping is not a car parking. The thing that separates a red light from a
+         parking spot is that <b>you get out and walk away</b>. So the detector waits for
+         all of this before it believes you:</p>
+      <p>1. Sustained vehicular speed for at least <code>25 s</code> — above
+         <code>6.0 m/s</code> (~21 km/h) reads as a car, <code>2.8–6.0 m/s</code> as a
+         bike. 2. Speed drops to walking or below, which opens a <b>candidate</b> at the
+         last vehicular position. 3. You stay non-vehicular for <code>75 s</code>
+         <em>and</em> get at least <code>25 m</code> from that spot. Only then is it
+         recorded.</p>
+      <p>Driving again before step 3 cancels the candidate, which is what rejects red
+         lights and stop-and-go traffic. Sitting in the car for twenty minutes does
+         <em>not</em> cancel it — the car is still where you stopped. What does cancel it
+         is a <b>gap in the data</b> over <code>15 min</code>: if fixes stop arriving we
+         cannot promise the car did not move, so we admit that instead of guessing.</p>
+      <p>Fixes with accuracy worse than <code>60 m</code> are thrown away, and speed is
+         median-smoothed over 5 samples so one GPS spike cannot fake a journey.</p>
+    </div>
+  </details>
+
+  <footer>
+    <p><b>Known limit:</b> phone browsers suspend geolocation when you switch apps or lock
+       the screen, so the page must stay open and in front for automatic detection to see
+       the whole trip. If it misses one, <b>Mark spot now</b> always works.</p>
+    <p>Positions are kept in this browser's local storage and are never uploaded.</p>
+  </footer>
+</div>
+
+<script type="module">
+import { ParkingDetector, haversine, bearing, STATE } from './detector.js';
+
+const KEY = 'park-finder/v1';
+const $ = id => document.getElementById(id);
+const CARDINALS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+const cardinal = d => CARDINALS[Math.round(d / 22.5) % 16];
+
+let watchId = null, heading = null, here = null, demoTimer = null;
+const log = [];
+
+const det = new ParkingDetector({}, ev => {
+  if (ev.type === 'state') { paintState(ev.state, ev.speed); return; }
+  if (ev.type === 'park') {
+    save(ev.at);
+    addLog('park', `${ev.at.mode === 'bike' ? 'Bike' : 'Car'} parked — you walked ${ev.at.walkedAwayM} m away`, ev.t);
+    banner(`Recorded your ${ev.at.mode} at ${new Date(ev.at.atMs).toLocaleTimeString()}.`);
+  } else if (ev.type === 'candidate') {
+    addLog('candidate', `Possible stop (${ev.at.mode}) — waiting to see if you walk away`, ev.t);
+  } else if (ev.type === 'cancel') {
+    addLog('cancel', `Discarded: ${ev.reason}`, ev.t);
+  }
+});
+
+/* ---------- storage ---------- */
+function save(p){ try { localStorage.setItem(KEY, JSON.stringify(p)); } catch {} paint(); }
+function load(){ try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { return null; } }
+function forget(){ try { localStorage.removeItem(KEY); } catch {} det.parked = null; paint(); }
+
+/* ---------- painting ---------- */
+function ago(ms){
+  const m = Math.round((Date.now() - ms) / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  return h < 24 ? `${h} h ${m % 60} min ago` : `${Math.floor(h / 24)} d ago`;
+}
+
+function paint(){
+  const p = load();
+  const a = $('answer');
+  if (!p){
+    a.classList.add('none');
+    $('dist').textContent = 'Not recorded yet';
+    $('compass').textContent = '';
+    $('sincewhen').textContent = 'Start tracking before you drive, or mark the spot by hand.';
+    $('strip').replaceChildren(Object.assign(document.createElement('span'),
+      {textContent:'No parking event stored.'}));
+    $('needle').style.opacity = '.22';
+    return;
+  }
+  a.classList.remove('none');
+  $('needle').style.opacity = '1';
+  const label = p.mode === 'bike' ? 'bike' : 'car';
+
+  if (here){
+    const d = Math.round(haversine(here, p));
+    const b = bearing(here, p);
+    $('dist').innerHTML = d >= 1000
+      ? `${(d/1000).toFixed(2)}<small>km away</small>`
+      : `${d}<small>m away</small>`;
+    $('compass').textContent = `${cardinal(b)} · ${Math.round(b)}°`;
+    // Rotate relative to where the phone points when we know; else north-up.
+    $('needle').style.transform = `rotate(${b - (heading ?? 0)}deg)`;
+  } else {
+    $('dist').textContent = 'Location saved';
+    $('compass').textContent = 'Waiting for your position to give a direction';
+  }
+
+  $('sincewhen').textContent =
+    `Your ${label} was parked ${ago(p.atMs)} (${new Date(p.atMs).toLocaleString(undefined,
+      {weekday:'short', hour:'numeric', minute:'2-digit'})})`;
+
+  const bits = [
+    `${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`,
+    p.accuracy != null ? `±${Math.round(p.accuracy)} m fix` : null,
+    p.walkedAwayM != null ? `confirmed after ${p.walkedAwayM} m on foot` : 'marked by hand',
+    heading != null ? 'arrow follows your phone' : 'arrow is north-up',
+  ].filter(Boolean);
+  const frag = document.createDocumentFragment();
+  bits.forEach(t => frag.append(Object.assign(document.createElement('span'), {textContent:t})));
+  const link = document.createElement('a');
+  link.href = `https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lon}`;
+  link.target = '_blank'; link.rel = 'noopener'; link.textContent = 'open in maps';
+  frag.append(link);
+  $('strip').replaceChildren(frag);
+}
+
+function paintState(state, speed){
+  const g = $('g-state');
+  g.className = 'state ' + state;
+  g.textContent = state;
+  $('g-speed').textContent = speed == null ? '—'
+    : `${(speed * 3.6).toFixed(1)} km/h`;
+}
+
+function addLog(kind, msg, t){
+  log.unshift({kind, msg, t: t ?? Date.now()});
+  const ul = $('log');
+  ul.replaceChildren(...log.slice(0, 50).map(e => {
+    const li = document.createElement('li');
+    const time = document.createElement('time');
+    time.textContent = new Date(e.t).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
+    const k = document.createElement('span'); k.className = 'k ' + e.kind; k.textContent = e.kind;
+    const m = document.createElement('span'); m.className = 'msg'; m.textContent = e.msg;
+    li.append(time, k, m);
+    return li;
+  }));
+}
+
+function banner(text){ const b = $('banner'); b.textContent = text; b.hidden = false; }
+
+/* ---------- geolocation ---------- */
+function onFix(pos){
+  const c = pos.coords;
+  here = {lat:c.latitude, lon:c.longitude};
+  det.push({lat:c.latitude, lon:c.longitude, t:pos.timestamp,
+            accuracy:c.accuracy, speed:c.speed ?? undefined});
+  $('g-fixes').textContent = String(det.fixes.length + det.rejected);
+  const acc = $('g-acc');
+  acc.textContent = `±${Math.round(c.accuracy)} m`;
+  acc.className = c.accuracy <= 15 ? 'q-good' : c.accuracy <= 40 ? 'q-ok' : 'q-bad';
+  paint();
+}
+
+function onGeoError(err){
+  const why = {1:'Permission denied — allow location access to track automatically.',
+               2:'Position unavailable. Move somewhere with a clearer view of the sky.',
+               3:'Timed out waiting for a fix.'}[err.code] || err.message;
+  banner(why);
+  addLog('cancel', why);
+  stopTracking();
+}
+
+function startTracking(){
+  if (!navigator.geolocation){ banner('This browser has no geolocation support.'); return; }
+  watchId = navigator.geolocation.watchPosition(onFix, onGeoError,
+    {enableHighAccuracy:true, maximumAge:0, timeout:20000});
+  $('btn-track').textContent = 'Stop tracking';
+  $('btn-track').classList.add('live');
+  addLog('candidate', 'Tracking started');
+  requestHeading();
+  if ('wakeLock' in navigator) navigator.wakeLock.request('screen').catch(() => {});
+}
+
+function stopTracking(){
+  if (watchId != null) navigator.geolocation.clearWatch(watchId);
+  watchId = null;
+  $('btn-track').textContent = 'Start tracking';
+  $('btn-track').classList.remove('live');
+}
+
+function requestHeading(){
+  const attach = () => window.addEventListener('deviceorientationabsolute', e => {
+    if (e.absolute && e.alpha != null) { heading = 360 - e.alpha; }
+  }, {passive:true});
+  const D = window.DeviceOrientationEvent;
+  if (D && typeof D.requestPermission === 'function') D.requestPermission().then(r => {
+    if (r === 'granted') attach();
+  }).catch(() => {});
+  else if (D) attach();
+}
+
+/* ---------- actions ---------- */
+$('btn-track').onclick = () => (watchId == null ? startTracking() : stopTracking());
+
+$('btn-mark').onclick = () => {
+  if (!navigator.geolocation){ banner('This browser has no geolocation support.'); return; }
+  navigator.geolocation.getCurrentPosition(pos => {
+    const c = pos.coords;
+    save({lat:c.latitude, lon:c.longitude, accuracy:c.accuracy, atMs:pos.timestamp,
+          mode:'car', confirmedAtMs:pos.timestamp, walkedAwayM:null});
+    here = {lat:c.latitude, lon:c.longitude};
+    addLog('park', `Marked by hand (±${Math.round(c.accuracy)} m)`, pos.timestamp);
+    banner('Spot saved from your current position.');
+  }, onGeoError, {enableHighAccuracy:true, timeout:20000});
+};
+
+$('btn-clear').onclick = () => { forget(); addLog('cancel', 'Stored spot forgotten'); };
+
+/* A scripted drive, so the detector can be watched working without a car. */
+$('btn-demo').onclick = () => {
+  if (demoTimer){ clearInterval(demoTimer); demoTimer = null; $('btn-demo').textContent = 'Replay a sample drive'; return; }
+  stopTracking();
+  det.reset();
+  addLog('candidate', 'Replaying a scripted drive: 4 min at 47 km/h, a red light, then parking');
+  const legs = [[13,150],[0,45],[13,100],[0,30],[1.4,150]];   // [m/s, seconds]
+  const R = 6371000, start = {lat:37.4275, lon:-122.1697};
+  let pos = {...start}, t = Date.now() - 500_000, li = 0, i = 0;
+  $('btn-demo').textContent = 'Stop replay';
+  demoTimer = setInterval(() => {
+    if (li >= legs.length){ clearInterval(demoTimer); demoTimer = null;
+      $('btn-demo').textContent = 'Replay a sample drive'; return; }
+    const [sp, secs] = legs[li];
+    for (let k = 0; k < 5; k++){                   // 5 simulated seconds per tick
+      if (sp > 0){
+        const br = li === 4 ? 0 : Math.PI/2;       // walk north at the end
+        const lat = pos.lat * Math.PI/180, lon = pos.lon * Math.PI/180, dm = sp;
+        const l2 = Math.asin(Math.sin(lat)*Math.cos(dm/R) + Math.cos(lat)*Math.sin(dm/R)*Math.cos(br));
+        const o2 = lon + Math.atan2(Math.sin(br)*Math.sin(dm/R)*Math.cos(lat),
+                                    Math.cos(dm/R) - Math.sin(lat)*Math.sin(l2));
+        pos = {lat: l2*180/Math.PI, lon: o2*180/Math.PI};
+      }
+      t += 1000;
+      det.push({lat:pos.lat, lon:pos.lon, t, accuracy:8, speed:sp});
+      here = {lat:pos.lat, lon:pos.lon};
+      if (++i >= secs){ i = 0; li++; break; }
+    }
+    $('g-fixes').textContent = String(det.fixes.length + det.rejected);
+    $('g-acc').textContent = '±8 m'; $('g-acc').className = 'q-good';
+    paint();
+  }, 60);
+};
+
+paint();
+setInterval(() => { if (load()) paint(); }, 30_000);   // keep "x min ago" honest
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+
+// iOS fires no beforeinstallprompt, so Safari users get told how to install by hand.
+// Hidden once the page is already running standalone from the home screen.
+const standalone = window.matchMedia('(display-mode: standalone)').matches ||
+                   navigator.standalone === true;
+if (!standalone) {
+  const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+              (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const tip = document.createElement('div');
+  tip.className = 'banner';
+  tip.style.borderLeftColor = 'var(--ok)';
+  tip.textContent = iOS
+    ? 'Install it: tap Share, then “Add to Home Screen”. It then opens full screen and works offline.'
+    : 'Install it from your browser menu (“Install app” / “Add to Home Screen”) to run it full screen and offline.';
+  document.querySelector('details.how').before(tip);
+}
+</script>
