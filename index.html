@@ -83,7 +83,12 @@ h1 em{font-style:normal;color:var(--accent)}
 .state.driving{color:var(--accent)} .state.cycling{color:var(--warn)}
 .state.walking{color:var(--ok)} .state.stationary{color:var(--ink-2)}
 .state.unknown{color:var(--muted)}
-.q-good{color:var(--ok)} .q-ok{color:var(--warn)} .q-bad{color:var(--bad)}
+/* Scoped to the element they are actually set on (onFix() writes them to #g-acc).
+   Unscoped, the audit had nowhere to mount them but <body>, and measured their
+   contrast against the page background instead of the panel they sit on — off by
+   up to 1.31, and in dark mode optimistic. .gauge dd sets no colour, so the added
+   specificity changes nothing on screen. */
+#g-acc.q-good{color:var(--ok)} #g-acc.q-ok{color:var(--warn)} #g-acc.q-bad{color:var(--bad)}
 
 /* ---------- controls ---------- */
 .actions{display:flex;flex-wrap:wrap;gap:8px;padding:14px 16px}

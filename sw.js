@@ -4,7 +4,7 @@
  * files and the webfont. So it is cache-first across the board, which means it opens
  * instantly in a parking garage with no signal, which is exactly where it is needed.
  */
-const VERSION = 'park-v1';
+const VERSION = 'park-v2';
 const SHELL = ['./', './index.html', './detector.js', './manifest.webmanifest',
                './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'];
 

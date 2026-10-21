@@ -150,6 +150,16 @@ export class ParkingDetector {
     const movedLongEnough = this.movingSinceMs !== null &&
       this.lastVehicularFix && (this.lastVehicularFix.t - this.movingSinceMs) >= this.o.minMovingMs;
 
+    // A bout too short to count is over: forget it, or the next short bout minutes
+    // later measures "moving" from this one and passes the minMovingMs test. On real
+    // GPS (projects/park-eval) that summing of noise spikes was a third of all false
+    // parks during walks.
+    if (!this.candidate && !movedLongEnough && this.movingSinceMs !== null) {
+      this.movingSinceMs = null;
+      this.lastVehicularFix = null;
+      this.peakSpeed = 0;
+    }
+
     if (!this.candidate && movedLongEnough && this.lastVehicularFix) {
       this.candidate = {
         fix: this.lastVehicularFix,

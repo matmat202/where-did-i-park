@@ -189,5 +189,17 @@ console.log('\n9. two trips in one session  -> both detected, latest kept');
     parks.length === 2 && haversine(parks[0].at, parks[1].at) > 100);
 }
 
+console.log('\n10. walking only, with brief speed spikes minutes apart  -> no park');
+{
+  // Found on real GPS (projects/park-eval, GeoLife): a bout of vehicular speed too
+  // short to count used to leave movingSinceMs set, so a second short bout minutes
+  // later measured "moving" from the FIRST one and passed the 25 s test. Two
+  // 10-second blips, five minutes apart, on an ordinary walk.
+  const walk = s => ({ speed: 1.3, seconds: s, bearing: 0 });
+  const blip = { speed: 8, seconds: 10, bearing: 0 };
+  const { parks } = run(trace([walk(120), blip, walk(300), blip, walk(200)]));
+  check('no park from summed blips', parks.length === 0, `got ${parks.length}`);
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
