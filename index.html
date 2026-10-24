@@ -15,7 +15,7 @@
 :root{
   --ground:#e9ebe9; --surface:#ffffff; --surface-2:#dfe2df; --sunk:#f3f5f3;
   --ink:#15181a; --ink-2:#3f4549; --muted:#60666a; --line:#cbd0cd;
-  --accent:#b45309; --accent-ink:#ffffff; --accent-soft:#f6e8d8;
+  --accent:#b45309; --accent-ink:#ffffff; --accent-soft:#f6e8d8; --link:#9a4508;
   --ok:#17683f; --warn:#8a6100; --bad:#9b2219; --bad-ink:#ffffff;
   --r:3px;
   --f-sign:"Oswald","Arial Narrow",Arial,sans-serif;
@@ -26,14 +26,14 @@
   :root:not([data-theme="light"]){
     --ground:#15181a; --surface:#1e2225; --surface-2:#272c30; --sunk:#171b1d;
     --ink:#e7eaec; --ink-2:#b0b7bb; --muted:#868f94; --line:#333a3e;
-    --accent:#e8921f; --accent-ink:#1a1206; --accent-soft:#3a2a10;
+    --accent:#e8921f; --accent-ink:#1a1206; --accent-soft:#3a2a10; --link:#e8921f;
     --ok:#5bbd86; --warn:#d6a53c; --bad:#e2766c; --bad-ink:#2a0b08;
   }
 }
 :root[data-theme="dark"]{
   --ground:#15181a; --surface:#1e2225; --surface-2:#272c30; --sunk:#171b1d;
   --ink:#e7eaec; --ink-2:#b0b7bb; --muted:#868f94; --line:#333a3e;
-  --accent:#e8921f; --accent-ink:#1a1206; --accent-soft:#3a2a10;
+  --accent:#e8921f; --accent-ink:#1a1206; --accent-soft:#3a2a10; --link:#e8921f;
   --ok:#5bbd86; --warn:#d6a53c; --bad:#e2766c; --bad-ink:#2a0b08;
 }
 *{box-sizing:border-box}
@@ -136,7 +136,7 @@ details.how b{color:var(--ink)}
 footer{margin-top:26px;padding-top:14px;border-top:1px solid var(--line);font-size:12px;
   color:var(--muted)}
 footer p{margin:5px 0;max-width:62ch}
-a{color:var(--accent)}
+a{color:var(--link)}
 </style>
 
 <div class="wrap">
@@ -221,11 +221,18 @@ a{color:var(--accent)}
        the screen, so the page must stay open and in front for automatic detection to see
        the whole trip. If it misses one, <b>Mark spot now</b> always works.</p>
     <p>Positions are kept in this browser's local storage and are never uploaded.</p>
+    <p>Building names near Stanford © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>, bundled with the page.</p>
   </footer>
 </div>
 
 <script type="module">
-import { ParkingDetector, haversine, bearing, STATE } from './detector.js';
+import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, screenKeeper, placeLabel, STATE } from './detector.js';
+import { LANDMARKS } from './landmarks.js';
+import { zoneAt, zoneLine } from './zone.js';
+import { MARKERS, LOTS } from './zones.js';
+const awake = screenKeeper(navigator, document);
+// Apple Maps ships on every iPhone, iPad and Mac, so those get its walking route.
+const APPLE = /iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent);
 
 const KEY = 'park-finder/v1';
 const $ = id => document.getElementById(id);
@@ -233,6 +240,7 @@ const CARDINALS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW
 const cardinal = d => CARDINALS[Math.round(d / 22.5) % 16];
 
 let watchId = null, heading = null, here = null, demoTimer = null;
+let needleDeg = null;   // unwrapped, so the transition never spins the long way
 const log = [];
 
 const det = new ParkingDetector({}, ev => {
@@ -287,7 +295,8 @@ function paint(){
       : `${d}<small>m away</small>`;
     $('compass').textContent = `${cardinal(b)} · ${Math.round(b)}°`;
     // Rotate relative to where the phone points when we know; else north-up.
-    $('needle').style.transform = `rotate(${b - (heading ?? 0)}deg)`;
+    needleDeg = turnTo(needleDeg, b - (heading ?? 0));
+    $('needle').style.transform = `rotate(${needleDeg}deg)`;
   } else {
     $('dist').textContent = 'Location saved';
     $('compass').textContent = 'Waiting for your position to give a direction';
@@ -298,6 +307,8 @@ function paint(){
       {weekday:'short', hour:'numeric', minute:'2-digit'})})`;
 
   const bits = [
+    placeLabel(p, LANDMARKS),
+    zoneLine(zoneAt(p, { markers: MARKERS, lots: LOTS })),
     `${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`,
     p.accuracy != null ? `±${Math.round(p.accuracy)} m fix` : null,
     p.walkedAwayM != null ? `confirmed after ${p.walkedAwayM} m on foot` : 'marked by hand',
@@ -306,8 +317,8 @@ function paint(){
   const frag = document.createDocumentFragment();
   bits.forEach(t => frag.append(Object.assign(document.createElement('span'), {textContent:t})));
   const link = document.createElement('a');
-  link.href = `https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lon}`;
-  link.target = '_blank'; link.rel = 'noopener'; link.textContent = 'open in maps';
+  link.href = walkLink(p, APPLE);
+  link.target = '_blank'; link.rel = 'noopener'; link.textContent = 'walk there in maps';
   frag.append(link);
   $('strip').replaceChildren(frag);
 }
@@ -366,21 +377,40 @@ function startTracking(){
   $('btn-track').classList.add('live');
   addLog('candidate', 'Tracking started');
   requestHeading();
-  if ('wakeLock' in navigator) navigator.wakeLock.request('screen').catch(() => {});
+  awake.hold();
 }
 
 function stopTracking(){
   if (watchId != null) navigator.geolocation.clearWatch(watchId);
   watchId = null;
+  awake.release();
   $('btn-track').textContent = 'Start tracking';
   $('btn-track').classList.remove('live');
 }
 
+// iOS sends its heading on plain deviceorientation (webkitCompassHeading); others send it
+// on deviceorientationabsolute. headingFrom() reads both and ignores the relative kind.
+// The needle repaints on turn, coalesced to a frame: standing still, GPS fixes are too
+// rare for the arrow to follow the phone.
+let headingAsked = false, repaintQueued = false;
+function onOrientation(e){
+  const h = headingFrom(e);
+  if (h == null) return;
+  heading = h;
+  if (!repaintQueued){
+    repaintQueued = true;
+    requestAnimationFrame(() => { repaintQueued = false; paint(); });
+  }
+}
 function requestHeading(){
-  const attach = () => window.addEventListener('deviceorientationabsolute', e => {
-    if (e.absolute && e.alpha != null) { heading = 360 - e.alpha; }
-  }, {passive:true});
+  if (headingAsked) return;
+  const attach = () => {
+    headingAsked = true;
+    window.addEventListener('deviceorientationabsolute', onOrientation, {passive:true});
+    window.addEventListener('deviceorientation', onOrientation, {passive:true});
+  };
   const D = window.DeviceOrientationEvent;
+  // iOS only grants this from a tap, so every caller is a button handler.
   if (D && typeof D.requestPermission === 'function') D.requestPermission().then(r => {
     if (r === 'granted') attach();
   }).catch(() => {});
@@ -390,16 +420,22 @@ function requestHeading(){
 /* ---------- actions ---------- */
 $('btn-track').onclick = () => (watchId == null ? startTracking() : stopTracking());
 
+let marking = false;
 $('btn-mark').onclick = () => {
   if (!navigator.geolocation){ banner('This browser has no geolocation support.'); return; }
-  navigator.geolocation.getCurrentPosition(pos => {
+  requestHeading();   // the only path that works on iPhone, so it has to ask too
+  if (marking) return;   // a second tap while sampling would start a second watch
+  marking = true;
+  banner('Getting a precise fix…');
+  sampleBestFix(navigator.geolocation, pos => {
+    marking = false;
     const c = pos.coords;
     save({lat:c.latitude, lon:c.longitude, accuracy:c.accuracy, atMs:pos.timestamp,
           mode:'car', confirmedAtMs:pos.timestamp, walkedAwayM:null});
     here = {lat:c.latitude, lon:c.longitude};
     addLog('park', `Marked by hand (±${Math.round(c.accuracy)} m)`, pos.timestamp);
     banner('Spot saved from your current position.');
-  }, onGeoError, {enableHighAccuracy:true, timeout:20000});
+  }, err => { marking = false; onGeoError(err); });
 };
 
 $('btn-clear').onclick = () => { forget(); addLog('cancel', 'Stored spot forgotten'); };

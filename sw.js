@@ -4,8 +4,8 @@
  * files and the webfont. So it is cache-first across the board, which means it opens
  * instantly in a parking garage with no signal, which is exactly where it is needed.
  */
-const VERSION = 'park-v2';
-const SHELL = ['./', './index.html', './detector.js', './manifest.webmanifest',
+const VERSION = 'park-v3';
+const SHELL = ['./', './index.html', './detector.js', './landmarks.js', './zone.js', './zones.js', './manifest.webmanifest',
                './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', e => {

@@ -61,6 +61,140 @@ export function bearing(a, b) {
   return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
 }
 
+/**
+ * Compass heading (degrees clockwise from north) from a device-orientation event, or
+ * null when the event carries none. Two dialects:
+ *  - iOS Safari fires plain `deviceorientation` with `webkitCompassHeading`, and never
+ *    fires `deviceorientationabsolute` or sets `absolute` (MDN browser-compat-data).
+ *    Reading only the standard path left the arrow north-up on every iPhone.
+ *  - Chrome/Firefox fire `deviceorientationabsolute` with absolute=true and alpha
+ *    counter-clockwise from north. A non-absolute alpha is relative to wherever the
+ *    phone happened to point at page load, so it is no heading at all.
+ */
+export function headingFrom(e) {
+  if (!e) return null;
+  const w = e.webkitCompassHeading;
+  if (typeof w === 'number' && Number.isFinite(w) && w >= 0) return w % 360;
+  if (e.absolute === true && typeof e.alpha === 'number' && Number.isFinite(e.alpha))
+    return (360 - e.alpha) % 360;
+  return null;
+}
+
+/**
+ * The needle angle to set, given the one it shows now, so it turns the short way.
+ * rotate(b - heading) jumps by ~360 whenever the heading crosses north, and a CSS
+ * transition interpolates that literally: a full spin. Keeping the angle unwrapped
+ * (prev + the signed shortest difference, in [-180, 180)) makes every step <= 180.
+ */
+export function turnTo(prev, target) {
+  if (prev == null || !Number.isFinite(prev)) return target;
+  const d = (((target - prev) % 360) + 540) % 360 - 180;
+  return prev + d;
+}
+
+/**
+ * Walking directions back to the spot. The old link was Google's search action, which
+ * drops a pin ("a place, not a route"), so getting back meant tapping Directions and
+ * then switching off the driving default. On Apple devices Apple Maps is always
+ * installed and opens natively; everywhere else Google's directions action does.
+ * Coordinates only, so nothing but the spot leaves the page.
+ */
+export function walkLink(p, apple) {
+  const ll = `${(+p.lat).toFixed(6)},${(+p.lon).toFixed(6)}`;
+  return apple
+    ? `https://maps.apple.com/directions?destination=${ll}&mode=walking`
+    : `https://www.google.com/maps/dir/?api=1&destination=${ll}&travelmode=walking`;
+}
+
+/**
+ * A name for where the spot is: "40 m SE of Y2E2". A pin and a compass get you back to
+ * the right rack field, but at Stanford the rack fields are huge and look alike, and a
+ * building is what you remember. `list` is [[lat, lon, name], ...] (landmarks.js, bundled,
+ * so no lookup ever sends the spot anywhere). Null past `maxM`, so off campus says nothing
+ * rather than naming something a kilometre away. Under `atM` it is just "at <name>".
+ */
+export function placeLabel(p, list, { maxM = 80, atM = 15 } = {}) {
+  if (!p || !Number.isFinite(+p.lat) || !Number.isFinite(+p.lon) || !list) return null;
+  let best = null, bestD = Infinity;
+  for (const row of list) {
+    const d = haversine({ lat: row[0], lon: row[1] }, p);
+    if (d < bestD) { bestD = d; best = row; }
+  }
+  if (!best || bestD > maxM) return null;
+  const name = best[2];
+  if (bestD < atM) return `at ${name}`;
+  const dir = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][
+    Math.round(bearing({ lat: best[0], lon: best[1] }, p) / 45) % 8];
+  return `${Math.round(bestD / 5) * 5} m ${dir} of ${name}`;
+}
+
+/**
+ * Manual "mark my spot" is the only path that works on iPhone, and its first fix is often
+ * a coarse Wi-Fi/cell one that GPS refines over the next few seconds. So watch for up to
+ * `windowMs` after the first fix and keep the most accurate one, stopping early once a fix
+ * is within `goodM`. `geo` is navigator.geolocation (injectable for tests); the timers too.
+ * Calls done(position) with the best fix, or fail(error) if none arrived. Returns cancel().
+ */
+export function sampleBestFix(geo, done, fail, o = {}) {
+  const { windowMs = 5000, goodM = 15, timeoutMs = 20000,
+          setT = setTimeout, clearT = clearTimeout } = o;
+  let best = null, id = null, over = false, win = null;
+  const acc = pos => (Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : Infinity);
+  const stop = () => {
+    over = true; clearT(win); clearT(cap);
+    if (id != null) geo.clearWatch(id);
+  };
+  const finish = () => { if (over) return; stop(); done(best); };
+  const cap = setT(() => {
+    if (over) return;
+    if (best) finish();
+    else { stop(); fail({ code: 3, message: 'No position fix arrived in time.' }); }
+  }, timeoutMs);
+  id = geo.watchPosition(pos => {
+    if (over) return;
+    if (!best || acc(pos) < acc(best)) best = pos;
+    if (acc(best) <= goodM) return finish();
+    if (win == null) win = setT(finish, windowMs);
+  }, err => {
+    if (over) return;
+    if (best) finish();
+    else { stop(); fail(err); }
+  }, { enableHighAccuracy: true, maximumAge: 0, timeout: timeoutMs });
+  if (over && id != null) geo.clearWatch(id);   // a fake geo can answer synchronously
+  return () => { if (!over) stop(); };
+}
+
+/**
+ * Automatic detection only sees fixes while the page is open in front, so tracking holds a
+ * screen wake lock. Browsers drop that lock whenever the page is hidden (measured in Chromium:
+ * minimise -> released, restore -> still released), so one glance at another app used to
+ * leave the screen free to sleep for the rest of the drive. hold() keeps asking for it each
+ * time the page is visible again; release() lets the screen sleep once tracking stops.
+ * `nav` and `doc` are navigator and document, injectable for tests.
+ */
+export function screenKeeper(nav, doc) {
+  let wanted = false, lock = null, asking = false;
+  const take = () => {
+    if (!wanted || asking || !nav.wakeLock || doc.visibilityState !== 'visible') return;
+    if (lock && !lock.released) return;
+    asking = true;
+    nav.wakeLock.request('screen').then(l => {
+      asking = false;
+      if (wanted) lock = l; else l.release().catch(() => {});
+    }, () => { asking = false; });
+  };
+  if (nav.wakeLock) doc.addEventListener('visibilitychange', take);
+  return {
+    hold() { wanted = true; take(); },
+    release() {
+      wanted = false;
+      if (lock && !lock.released) lock.release().catch(() => {});
+      lock = null;
+    },
+    get held() { return !!lock && !lock.released; },
+  };
+}
+
 function median(xs) {
   if (!xs.length) return 0;
   const s = [...xs].sort((p, q) => p - q);
