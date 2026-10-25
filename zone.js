@@ -7,18 +7,36 @@
  *   visitor                            Mon-Fri 8 am - 4 pm
  *   Blackwelder / EVGR-A shared lot    'C' permits 4 pm - 2 am, every day
  *   Quillen Ct, EVGR North, Hulme Ct   24 hours, every day
- * University holidays lift the commuter and visitor rules; this file does not know them,
- * so on a holiday it says "enforced" when it is not. That is the safe way to be wrong.
+ * University holidays lift the commuter, Oval and visitor rules ("enforcement remains as
+ * posted, including winter closure, except on university holidays"). HOLIDAYS is that list,
+ * from cardinalatwork.stanford.edu's University Holiday Schedule (read 2026-10-25). Past
+ * its last date nothing is a holiday, so the page goes back to saying "enforced": the safe
+ * way to be wrong. Shared and resident lots keep their hours on a holiday here too; the
+ * page excludes only non-shared residential lots from the lift, but residents still park
+ * in the shared ones, so this file does not promise them.
  * Times are Stanford's (America/Los_Angeles) whatever zone the phone is in.
  */
 import { haversine } from './detector.js';
 
+/** Stanford university holidays (Stanford dates), and the winter closure around them. */
+export const HOLIDAYS = new Map([
+  ['2026-01-01', "New Year's Day"], ['2026-01-19', 'Martin Luther King, Jr. Day'],
+  ['2026-02-16', "Presidents' Day"], ['2026-05-25', 'Memorial Day'], ['2026-07-03', 'Independence Day'],
+  ['2026-09-07', 'Labor Day'], ['2026-11-26', 'Thanksgiving'], ['2026-11-27', 'the Friday after Thanksgiving'],
+  ['2026-12-24', 'the winter holiday'], ['2026-12-25', 'the winter holiday'],
+  ['2027-01-01', "New Year's Day"], ['2027-01-18', 'Martin Luther King, Jr. Day'],
+  ['2027-02-15', "Presidents' Day"], ['2027-05-31', 'Memorial Day'], ['2027-07-05', 'Independence Day'],
+  ['2027-09-06', 'Labor Day'], ['2027-11-25', 'Thanksgiving'], ['2027-11-26', 'the Friday after Thanksgiving'],
+  ['2027-12-23', 'the winter holiday'], ['2027-12-24', 'the winter holiday'],
+]);
+export const CLOSURES = [['2026-12-21', '2027-01-01']];   // 2027/28 dates "announced in spring 2027"
+
 const WEEKDAYS = [1, 2, 3, 4, 5];
 const EVERY = [0, 1, 2, 3, 4, 5, 6];
 export const RULES = {
-  permit: { label: 'permit', days: WEEKDAYS, from: 6, to: 16 },
-  oval: { label: 'Oval A', days: WEEKDAYS, from: 6, to: 18 },
-  visitor: { label: 'visitor', days: WEEKDAYS, from: 8, to: 16 },
+  permit: { label: 'permit', days: WEEKDAYS, from: 6, to: 16, holidays: true },
+  oval: { label: 'Oval A', days: WEEKDAYS, from: 6, to: 18, holidays: true },
+  visitor: { label: 'visitor', days: WEEKDAYS, from: 8, to: 16, holidays: true },
   evening: { label: "'C'", days: EVERY, from: 16, to: 26 },   // 26 = 2 am the next day
   always: { label: 'resident', days: EVERY, from: 0, to: 24 },
 };
@@ -58,13 +76,41 @@ export function zoneAt(p, { markers, lots, shared = SHARED }, { nearM = 40 } = {
 }
 
 const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-/** Weekday (0 = Sun) and fractional hour at Stanford. */
+/** Weekday (0 = Sun), fractional hour and 'YYYY-MM-DD' date at Stanford. */
 export function stanfordClock(date) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/Los_Angeles', weekday: 'short', hour: 'numeric', minute: 'numeric', hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit',
   }).formatToParts(date).map(x => [x.type, x.value]));
-  return { day: DAY.indexOf(parts.weekday), hour: (+parts.hour % 24) + (+parts.minute) / 60 };
+  return {
+    day: DAY.indexOf(parts.weekday), hour: (+parts.hour % 24) + (+parts.minute) / 60,
+    ymd: `${parts.year}-${parts.month}-${parts.day}`,
+  };
 }
+
+/** 'YYYY-MM-DD' `k` days after `ymd`. */
+const addDays = (ymd, k) => new Date(Date.parse(ymd + 'T12:00:00Z') + k * 864e5).toISOString().slice(0, 10);
+/** Is `rule` lifted on the Stanford date `k` days from `now`? A clock with no date has no holidays. */
+const lifted = (rule, now, k) => !!(rule.holidays && now.ymd && HOLIDAYS.has(addDays(now.ymd, k)));
+
+/**
+ * The holiday or closure line for the page, or null on an ordinary day:
+ *   "Thanksgiving: permit, Oval and visitor parking not enforced today"
+ *   "Winter closure: enforced as posted, except university holidays Dec 24, Dec 25 and Jan 1"
+ * The second is the r/stanford 2019 question: closure is not a holiday.
+ */
+export function holidayNote(date = new Date(), { holidays = HOLIDAYS, closures = CLOSURES } = {}) {
+  const { ymd } = stanfordClock(date);
+  if (holidays.has(ymd)) return `${cap(holidays.get(ymd))}: permit, Oval and visitor parking not enforced today`;
+  const c = closures.find(([a, b]) => ymd >= a && ymd <= b);
+  if (!c) return null;
+  const days = [...holidays.keys()].filter(d => d >= c[0] && d <= c[1]).map(shortDate);
+  return `Winter closure: enforced as posted${days.length ? `, except university holidays ${list(days)}` : ''}`;
+}
+const cap = s => s.replace(/^the /, 'The ').replace(/^./, x => x.toUpperCase());
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const shortDate = ymd => `${MON[+ymd.slice(5, 7) - 1]} ${+ymd.slice(8, 10)}`;
+const list = xs => xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`;
 
 const clockLabel = h => {
   const hh = Math.floor(h) % 24;
@@ -72,17 +118,20 @@ const clockLabel = h => {
 };
 
 /** { on, text } for one rule at Stanford-time {day, hour}. */
-export function ruleNow(rule, { day, hour }) {
+export function ruleNow(rule, now) {
+  const { day, hour } = now;
   if (rule.from === 0 && rule.to === 24) return { on: true, text: 'enforced 24/7' };
   const yesterday = (day + 6) % 7;
-  if (rule.days.includes(day) && hour >= rule.from && hour < rule.to)
+  if (rule.days.includes(day) && hour >= rule.from && hour < rule.to && !lifted(rule, now, 0))
     return { on: true, text: `enforced until ${clockLabel(rule.to)}` };
-  if (rule.to > 24 && rule.days.includes(yesterday) && hour < rule.to - 24)
+  if (rule.to > 24 && rule.days.includes(yesterday) && hour < rule.to - 24 && !lifted(rule, now, -1))
     return { on: true, text: `enforced until ${clockLabel(rule.to)}` };
-  for (let k = 0; k < 8; k++) {
+  for (let k = 0; k < 15; k++) {
     const d = (day + k) % 7;
-    if (!rule.days.includes(d) || (k === 0 && hour >= rule.from)) continue;
-    return { on: false, text: `not enforced until ${k === 0 ? '' : k === 1 ? 'tomorrow ' : DAY[d] + ' '}${clockLabel(rule.from)}` };
+    if (!rule.days.includes(d) || (k === 0 && hour >= rule.from) || lifted(rule, now, k)) continue;
+    const when = k === 0 ? '' : k === 1 ? 'tomorrow ' : k < 7 ? DAY[d] + ' ' : shortDate(addDays(now.ymd, k)) + ' ';
+    const why = rule.days.includes(day) && lifted(rule, now, 0) ? ' (university holiday)' : '';
+    return { on: false, text: `not enforced until ${when}${clockLabel(rule.from)}${why}` };
   }
   return { on: false, text: 'not enforced' };
 }
@@ -104,4 +153,49 @@ export function zoneLine(zone, date = new Date()) {
   });
   if (zone.types.includes('T')) parts.push('20-min spaces as posted');
   return groups.permit || groups.oval || groups.visitor ? parts.join('; ') : null;
+}
+
+/** Hours from Stanford-time {day, hour} until `rule` is next enforced: 0 if it is now. */
+export function hoursFree(rule, now) {
+  if (ruleNow(rule, now).on) return 0;
+  for (let k = 0; k < 15; k++) {
+    const start = k * 24 + rule.from - now.hour;
+    if (rule.days.includes((now.day + k) % 7) && start > 0 && !lifted(rule, now, k)) return start;
+  }
+  return Infinity;
+}
+
+const centroid = ring => ring.reduce((a, p) => [a[0] + p[0] / ring.length, a[1] + p[1] / ring.length], [0, 0]);
+
+/**
+ * The inverse of zoneLine: mapped lots near `p` that a car with no permit may use right now,
+ * nearest first. Each row is { lat, lon, m, lot, kind, text }, where kind is the space type
+ * that is free ('C permit', 'visitor', ...) and text its ruleNow line, e.g. "not enforced
+ * until Mon 6 am". Where several kinds are free, the one free longest wins. Shared resident
+ * lots never count (residents only, or 'C' at night), nor 20-minute-only lots, nor anything
+ * past `maxM`. Empty is an answer: on a weekday at 10 am every permit lot is enforced. The
+ * list's `nearby` says how many lots were in range at all, so off campus can say so instead.
+ */
+export function freeLots(p, { lots, shared = SHARED }, date = new Date(), { maxM = 1500, limit = 5 } = {}) {
+  const rows = Object.assign([], { nearby: 0 });
+  if (!p || !Number.isFinite(+p.lat) || !Number.isFinite(+p.lon)) return rows;
+  const now = stanfordClock(date);
+  for (const [types, name, rings] of lots) {
+    const [lat, lon] = centroid(rings[0]);
+    if (shared.some(s => haversine(s, { lat, lon }) <= s.r)) continue;
+    const m = haversine(p, { lat, lon });
+    if (m > maxM) continue;
+    rows.nearby++;
+    let best = null;
+    for (const g of new Set([...types].map(t => GROUP[t]).filter(Boolean))) {
+      const h = hoursFree(RULES[g], now);
+      if (h > 0 && (!best || h > best.h)) {
+        const ts = [...types].filter(t => GROUP[t] === g).join('/');
+        best = { h, kind: g === 'permit' ? `${ts} permit` : RULES[g].label, text: ruleNow(RULES[g], now).text };
+      }
+    }
+    if (best) rows.push({ lat, lon, m: Math.round(m), lot: name, kind: best.kind, text: best.text });
+  }
+  rows.sort((a, b) => a.m - b.m).splice(limit);
+  return rows;
 }

@@ -3,8 +3,17 @@
 <title>Where Did I Park</title>
 <meta name="description" content="Infers where you parked from your speed and position, and points you back. Nothing leaves your phone.">
 <meta name="theme-color" content="#15181a">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://matmat202.github.io/where-did-i-park/">
+<meta property="og:title" content="Where Did I Park">
+<meta property="og:description" content="Infers where you parked from your speed and position, and points you back. Nothing leaves your phone.">
+<meta property="og:image" content="https://matmat202.github.io/where-did-i-park/icons/icon-512.png">
+<meta property="og:image:width" content="512">
+<meta property="og:image:height" content="512">
+<meta name="twitter:card" content="summary">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Parked">
@@ -103,6 +112,12 @@ button:disabled{opacity:.45;cursor:not-allowed}
 button:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
 /* ---------- log ---------- */
+.free{list-style:none;margin:0;padding:0}
+.free li{display:flex;flex-wrap:wrap;gap:4px 11px;padding:8px 16px;border-bottom:1px solid var(--sunk);font-size:13px}
+.free .m{font-family:var(--f-mono);color:var(--muted);flex:0 0 4.5em;font-size:12px}
+.free .where{flex:1;min-width:0;color:var(--ink-2)}
+.free-note{padding:0 16px 12px;font-size:12px;color:var(--muted);margin:0}
+.free-holiday{margin:0 16px 10px;padding:8px 11px;border-radius:8px;background:var(--sunk);font-size:13px;color:var(--ink-2)}
 .log{list-style:none;margin:0;padding:0;max-height:260px;overflow-y:auto}
 .log li{display:flex;gap:11px;padding:8px 16px;border-bottom:1px solid var(--sunk);font-size:13px}
 .log time{font-family:var(--f-mono);color:var(--muted);flex:0 0 auto;font-size:12px}
@@ -188,6 +203,16 @@ a{color:var(--link)}
   </section>
 
   <section class="panel" style="margin-top:16px">
+    <h2>Free to park now</h2>
+    <div class="actions"><button id="btn-free" type="button">Lots near me</button></div>
+    <p class="free-holiday" id="free-holiday" hidden></p>
+    <ul class="free" id="free" hidden></ul>
+    <p class="free-note">Mapped lots where no permit or payment is needed at this hour, from
+       Stanford's default enforcement times and university holidays. A posted sign wins, and
+       event days (Frost, the stadium) are not known here.</p>
+  </section>
+
+  <section class="panel" style="margin-top:16px">
     <h2>Event log</h2>
     <ul class="log" id="log"></ul>
   </section>
@@ -228,7 +253,7 @@ a{color:var(--link)}
 <script type="module">
 import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, screenKeeper, placeLabel, STATE } from './detector.js';
 import { LANDMARKS } from './landmarks.js';
-import { zoneAt, zoneLine } from './zone.js';
+import { zoneAt, zoneLine, freeLots, holidayNote } from './zone.js';
 import { MARKERS, LOTS } from './zones.js';
 const awake = screenKeeper(navigator, document);
 // Apple Maps ships on every iPhone, iPad and Mac, so those get its walking route.
@@ -436,6 +461,53 @@ $('btn-mark').onclick = () => {
     addLog('park', `Marked by hand (±${Math.round(c.accuracy)} m)`, pos.timestamp);
     banner('Spot saved from your current position.');
   }, err => { marking = false; onGeoError(err); });
+};
+
+function paintHoliday(){
+  const note = holidayNote(), el = $('free-holiday');
+  el.hidden = !note;
+  el.textContent = note || '';
+}
+paintHoliday();
+
+function paintFree(at){
+  paintHoliday();
+  const rows = freeLots(at, { lots: LOTS });
+  const ul = $('free');
+  ul.hidden = false;
+  if (!rows.length){
+    ul.replaceChildren(Object.assign(document.createElement('li'), {textContent: rows.nearby
+      ? `Nothing free right now: all ${rows.nearby} mapped lots within 1.5 km are enforced (visitor spaces are paid).`
+      : 'No mapped Stanford lot within 1.5 km of you.'}));
+    return;
+  }
+  ul.replaceChildren(...rows.map(r => {
+    const li = document.createElement('li');
+    const name = r.lot || placeLabel(r, LANDMARKS, { maxM: 250 }) || 'unnamed lot';
+    const link = Object.assign(document.createElement('a'), {href: walkLink(r, APPLE)
+      .replace('mode=walking', 'mode=driving').replace('travelmode=walking', 'travelmode=driving'),
+      target:'_blank', rel:'noopener', textContent:'directions'});
+    li.append(
+      Object.assign(document.createElement('span'), {className:'m', textContent: r.m >= 1000 ? `${(r.m/1000).toFixed(1)} km` : `${r.m} m`}),
+      Object.assign(document.createElement('span'), {className:'where', textContent:`${name} · ${r.kind} ${r.text.replace(' (university holiday)', '')}`}),   // the holiday line above says it once
+      link);
+    return li;
+  }));
+}
+
+let finding = false;
+$('btn-free').onclick = () => {
+  if (here){ paintFree(here); return; }
+  if (!navigator.geolocation){ banner('This browser has no geolocation support.'); return; }
+  if (finding) return;
+  finding = true;
+  banner('Finding where you are…');
+  navigator.geolocation.getCurrentPosition(pos => {
+    finding = false;
+    here = {lat:pos.coords.latitude, lon:pos.coords.longitude};
+    $('banner').hidden = true;
+    paintFree(here);
+  }, err => { finding = false; onGeoError(err); }, {enableHighAccuracy:false, timeout:15000, maximumAge:60000});
 };
 
 $('btn-clear').onclick = () => { forget(); addLog('cancel', 'Stored spot forgotten'); };

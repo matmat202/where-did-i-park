@@ -6,7 +6,7 @@
  */
 import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, screenKeeper, placeLabel, DEFAULTS } from './detector.js';
 import { LANDMARKS } from './landmarks.js';
-import { zoneAt, zoneLine, ruleNow, stanfordClock, RULES, SHARED } from './zone.js';
+import { zoneAt, zoneLine, ruleNow, stanfordClock, RULES, SHARED, hoursFree, freeLots, holidayNote, HOLIDAYS } from './zone.js';
 import { MARKERS, LOTS } from './zones.js';
 
 const ORIGIN = { lat: 37.4275, lon: -122.1697 };   // Stanford-ish
@@ -502,6 +502,73 @@ console.log('\n11. input guards, geometry and device speed (bin/mutate survivors
   const garage = LOTS.find(l => l[1] === 'Roth Way Garage');
   const cen = garage && garage[2][0].reduce((a, p, i, r) => [a[0] + p[0] / r.length, a[1] + p[1] / r.length], [0, 0]);
   check('real data: inside Roth Way Garage reads its lot set', !!cen && zoneAt({ lat: cen[0], lon: cen[1] }, real)?.lot === 'Roth Way Garage');
+
+  // freeLots: the inverse question, "where may I park right now with no permit?"
+  check('hoursFree: 0 while enforced', hoursFree(P, stanfordClock(MON_10AM)) === 0);
+  check('hoursFree: Sat noon to Mon 6 am is 42 h', hoursFree(P, stanfordClock(SAT_NOON)) === 42);
+  check('hoursFree: 24/7 is never free', hoursFree(RULES.always, stanfordClock(SAT_NOON)) === 0);
+  const sq = (lat, lon, d = 0.0005) => [[lat, lon], [lat, lon + d], [lat + d, lon + d], [lat + d, lon]];
+  const near = { lat: 37.4300, lon: -122.1700 };
+  const FL = [
+    ['C', 'Far C', [sq(37.4300, -122.1500)]],           // ~1.75 km east: past maxM
+    ['ACV', 'Garage', [sq(37.4310, -122.1700)]],         // ~140 m north
+    ['C', 'Close C', [sq(37.4302, -122.1702)]],          // ~40 m
+    ['T', 'Twenty', [sq(37.4301, -122.1701)]],           // 20-min only
+    ['C', 'Resident', [sq(SHARED[1].lat - 0.00025, SHARED[1].lon - 0.00025)]],
+  ];
+  const fs = freeLots(near, { lots: FL }, SAT_NOON);
+  check('freeLots: weekend returns nearest first, drops far, 20-min and shared lots',
+    fs.map(r => r.lot).join() === 'Close C,Garage');
+  check('freeLots: a garage reports the kind free longest (visitor to Mon 8 > permit to Mon 6)',
+    fs[1].kind === 'visitor' && fs[1].text === 'not enforced until Mon 8 am');
+  const f10 = freeLots(near, { lots: FL }, MON_10AM);
+  check('freeLots: weekday 10 am, nothing is free, but 3 lots were in range (shared not counted)', f10.length === 0 && f10.nearby === 3);
+  const f7 = freeLots(near, { lots: FL }, MON_7AM);
+  check('freeLots: 7 am Monday only visitor spaces are free', f7.length === 1 && f7[0].lot === 'Garage' && f7[0].kind === 'visitor');
+  check('freeLots: C lots free after 4 pm say tomorrow 6 am', freeLots(near, { lots: FL }, MON_5PM)[0].text === 'not enforced until tomorrow 6 am');
+  check('freeLots: bad coords -> []', freeLots({ lat: NaN, lon: 0 }, { lots: FL }).length === 0 && freeLots(null, { lots: FL }).length === 0);
+  check('freeLots: limit caps the list', freeLots(near, { lots: FL }, SAT_NOON, { limit: 1 }).length === 1);
+  const quad = { lat: 37.4275, lon: -122.1697 };
+  const realSat = freeLots(quad, real, SAT_NOON);
+  check('real data: Saturday noon at the Quad finds 5 free lots, all within 1.5 km',
+    realSat.length === 5 && realSat.every(r => r.m <= 1500) && realSat.every((r, i, a) => !i || a[i - 1].m <= r.m));
+  check('real data: Monday 10 am at the Quad finds none', freeLots(quad, real, MON_10AM).length === 0);
+  check('real data: Palo Alto airport finds none, and no lot in range', freeLots({ lat: 37.4611, lon: -122.1150 }, real, SAT_NOON).nearby === 0);
+
+  // Holidays: "enforcement remains as posted, including winter closure, except on university
+  // holidays". PST is UTC-8 from Nov 1.
+  const THANKS_10AM = at('2026-11-26T18:00:00Z'), THANKS_5PM = at('2026-11-27T01:00:00Z'),
+    BLACKFRI = at('2026-11-27T18:00:00Z'), WED_BEFORE_5PM = at('2026-11-26T01:00:00Z'),
+    CLOSURE_TUE = at('2026-12-22T18:00:00Z'), DEC23_5PM = at('2026-12-24T01:00:00Z'),
+    XMAS = at('2026-12-25T18:00:00Z'), NYE_5PM = at('2027-01-01T01:00:00Z'),
+    THANKS_2028 = at('2028-11-23T18:00:00Z');
+  check('stanfordClock: carries the Stanford date, not the UTC one', stanfordClock(WED_BEFORE_5PM).ymd === '2026-11-25');
+  check('holiday: Thanksgiving 10 am, permit is off until Mon 6 am and says why',
+    ruleNow(P, stanfordClock(THANKS_10AM)).on === false
+    && ruleNow(P, stanfordClock(THANKS_10AM)).text === 'not enforced until Mon 6 am (university holiday)');
+  check('holiday: Oval and visitor are lifted too', !ruleNow(RULES.oval, stanfordClock(THANKS_10AM)).on && !ruleNow(RULES.visitor, stanfordClock(BLACKFRI)).on);
+  check('holiday: the day before skips Thu+Fri to Mon, with no holiday tag today',
+    ruleNow(P, stanfordClock(WED_BEFORE_5PM)).text === 'not enforced until Mon 6 am');
+  check('holiday: hoursFree Wed 5 pm before Thanksgiving is 109 h (to Mon 6 am)', hoursFree(P, stanfordClock(WED_BEFORE_5PM)) === 109);
+  check('holiday: shared and resident lots keep their hours', ruleNow(RULES.evening, stanfordClock(THANKS_5PM)).on && ruleNow(RULES.always, stanfordClock(THANKS_10AM)).on);
+  check('holiday: winter closure is NOT a holiday (the 2019 r/stanford question)', ruleNow(P, stanfordClock(CLOSURE_TUE)).text === 'enforced until 4 pm');
+  check('holiday: Dec 23 5 pm skips Dec 24-25 to Mon 6 am', ruleNow(P, stanfordClock(DEC23_5PM)).text === 'not enforced until Mon 6 am');
+  check('holiday: Dec 31 5 pm skips Jan 1 to Mon 6 am', ruleNow(P, stanfordClock(NYE_5PM)).text === 'not enforced until Mon 6 am');
+  check('holiday: past the published list it says enforced (safe)', ruleNow(P, stanfordClock(THANKS_2028)).on === true);
+  check('holiday: a clock with no date has no holidays', ruleNow(P, { day: 4, hour: 10 }).on === true);
+  check('holiday: zoneLine on Thanksgiving', zoneLine({ types: 'C', lot: 'x' }, THANKS_10AM) === 'C permit · not enforced until Mon 6 am (university holiday)');
+  const ft = freeLots(near, { lots: FL }, THANKS_10AM);
+  check('holiday: freeLots on Thanksgiving 10 am lists what Monday 10 am does not',
+    ft.map(r => r.lot).join() === 'Close C,Garage' && ft[1].kind === 'visitor');
+  check('holiday: real data, the Quad on Thanksgiving 10 am finds 5 free lots', freeLots(quad, real, THANKS_10AM).length === 5);
+  check('holidayNote: Thanksgiving', holidayNote(THANKS_10AM) === 'Thanksgiving: permit, Oval and visitor parking not enforced today');
+  check('holidayNote: the Friday after', holidayNote(BLACKFRI) === 'The Friday after Thanksgiving: permit, Oval and visitor parking not enforced today');
+  check('holidayNote: Christmas', holidayNote(XMAS).startsWith('The winter holiday: '));
+  check('holidayNote: closure names the holidays inside it',
+    holidayNote(CLOSURE_TUE) === 'Winter closure: enforced as posted, except university holidays Dec 24, Dec 25 and Jan 1');
+  check('holidayNote: an ordinary day is null', holidayNote(MON_10AM) === null && holidayNote(SAT_NOON) === null);
+  check('HOLIDAYS: 20 dates, all valid, all weekdays', HOLIDAYS.size === 20
+    && [...HOLIDAYS.keys()].every(d => { const w = new Date(d + 'T12:00:00Z').getUTCDay(); return w >= 1 && w <= 5; }));
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
