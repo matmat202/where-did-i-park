@@ -367,6 +367,66 @@ console.log('\n11. input guards, geometry and device speed (bin/mutate survivors
 
   r = rig(); const cancel = r.run(); r.fix(60); cancel(); r.advance(10000);
   check('cancel stops without calling back', r.out.got === null && r.out.err === null && r.geo.cleared === 1);
+
+  r = rig(); r.run(); r.fix(15);
+  check('a 15 m fix is good enough at once', r.out.got?.coords.accuracy === 15);
+  r = rig(); r.run(); r.fix(15.5); r.advance(4999);
+  check('a 15.5 m fix waits, and the window is 5 s, not a ms more', r.out.got === null);
+  r.advance(1);
+  check('... and closes at 5000 ms', r.out.got?.coords.accuracy === 15.5);
+}
+
+console.log('\n12. thresholds stood on exactly, and the median (bin/mutate survivors, 2026-10-26)');
+{
+  // rows: [seconds, metres east of ORIGIN, device speed]. smoothWindow 1 makes the speed
+  // the classifier sees the raw one, so every threshold below is met exactly, not about.
+  const seq = (rows, opts = {}) => run(rows.map(([s, m, v]) => ({ ...offset(ORIGIN, m, 90), t: T0 + s * 1000, accuracy: 10, speed: v })),
+    { smoothWindow: 1, ...opts });
+  const drive = n => Array.from({ length: n + 1 }, (_, i) => [i, i * 10, 10]);       // n seconds at 10 m/s
+  const stopAt = n => [n + 1, n * 10, 0];
+  const cands = r => r.events.filter(e => e.type === 'candidate').length;
+  check('a drive of exactly minMovingMs (25 s) can be a park, 24 s cannot',
+    cands(seq([...drive(25), stopAt(25)])) === 1 && cands(seq([...drive(24), stopAt(24)])) === 0);
+  const walkOff = (n, upTo) => Array.from({ length: upTo - n }, (_, i) => [n + 1 + i, n * 10 + 1.5 * (i + 1), 1.5]);
+  const conf = seq([...drive(30), ...walkOff(30, 140)]);
+  check('a park confirms at exactly confirmParkMs (75 s) after the stop',
+    conf.parks.length === 1 && conf.parks[0].at.confirmedAtMs - conf.parks[0].at.atMs === 75_000,
+    String(conf.parks[0] && conf.parks[0].at.confirmedAtMs - conf.parks[0].at.atMs));
+  // A grid sweep of random traces found this one: '&&' -> '||' re-announced the same stop on
+  // every fix while it waited for the walk-away. 110 fixes of walking, one candidate.
+  check('a pending stop is announced once, not once per fix', cands(conf) === 1, String(cands(conf)));
+  const standAt = (n, m) => [[n + 1, n * 10, 0], [n + 90, n * 10 + m, 0]];
+  check('walkAwayM is 25 m: 25.5 m away confirms, 24.5 m does not',
+    seq([...drive(30), ...standAt(30, 25.5)]).parks.length === 1 && seq([...drive(30), ...standAt(30, 24.5)]).parks.length === 0);
+  const gapThen = (n, sec) => [[n + 1, n * 10, 0], [n + 1 + sec, n * 10 + 100, 1]];
+  check('a hole of exactly 15 min is still trusted; 15.5 min is not',
+    seq([...drive(30), ...gapThen(30, 900)]).parks.length === 1 && seq([...drive(30), ...gapThen(30, 930)]).parks.length === 0);
+  const ride = v => [...Array.from({ length: 31 }, (_, i) => [i, i * v, v]), ...Array.from({ length: 110 }, (_, k) => [31 + k, 30 * v + 1.5 * (k + 1), 1.5])];
+  check('peak speed exactly vehicularSpeed (6 m/s) is a car, 5.9 a bike',
+    seq(ride(6)).parks[0]?.at.mode === 'car' && seq(ride(5.9)).parks[0]?.at.mode === 'bike',
+    `${seq(ride(6)).parks[0]?.at.mode}/${seq(ride(5.9)).parks[0]?.at.mode}`);
+  const c = new ParkingDetector();
+  check('classify on the thresholds: 6 drives, 2.8 cycles, 0.6 is stationary',
+    c._classify(6) === 'driving' && c._classify(2.8) === 'cycling' && c._classify(0.6) === 'stationary');
+  const acc = new ParkingDetector();
+  acc.push({ ...ORIGIN, t: T0, accuracy: 60.5 }); acc.push({ ...ORIGIN, t: T0 + 1000, accuracy: 60 });
+  check('the accuracy limit is 60 m (literal, not read back from DEFAULTS)', acc.rejected === 1 && acc.fixes.length === 1);
+  // The median, four speeds handed over out of order: [4, 1, 12, 8] -> (4 + 8) / 2. Unsorted
+  // it would be (1 + 12) / 2 = 6.5 -- and [4, 1, 12, 9] gives 6.5 both ways, so it tested nothing.
+  const med = new ParkingDetector();
+  [4, 1, 12, 8].forEach((v, i) => med.push({ ...ORIGIN, t: T0 + i * 1000, speed: v }));
+  check('median of an even window averages the middle two of the SORTED speeds', med.peakSpeed === 6, String(med.peakSpeed));
+  const win = new ParkingDetector();
+  [0, 0, 0, 9, 9, 9].forEach((v, i) => win.push({ ...ORIGIN, t: T0 + i * 1000, speed: v }));
+  check('the speed window is 5 fixes: three 9s after three 0s already read as driving', win.state === 'driving', win.state);
+  const s = new ParkingDetector(), a = { ...ORIGIN, t: T0 };
+  check('derived speed is exact: 10 m in 1 s is 10 m/s', Math.abs(s._speedFor({ ...offset(ORIGIN, 10, 90), t: T0 + 1000 }, a) - 10) < 1e-6);
+  check('derived speed at 2 Hz: 5 m in 0.5 s is 10 m/s, not 0', Math.abs(s._speedFor({ ...offset(ORIGIN, 5, 90), t: T0 + 500 }, a) - 10) < 1e-6);
+  check('derived speed: a first fix, or a repeat time, is 0 (never NaN or 1)',
+    s._speedFor({ ...ORIGIN, t: T0 }) === 0 && s._speedFor({ ...ORIGIN, t: T0 }, a) === 0);
+  check('bearing (0,0) -> (1,1) is 44.9956364553 deg (Python, independently)', Math.abs(bearing({ lat: 0, lon: 0 }, { lat: 1, lon: 1 }) - 44.99563645534488) < 1e-9);
+  check('iOS heading 360 is north, 0', headingFrom({ webkitCompassHeading: 360 }) === 0);
+  check('turnTo from a NaN needle snaps to the target', turnTo(NaN, 90) === 90);
 }
 
 // --- screenKeeper: the wake lock must come back after the page was hidden -----------------
@@ -414,6 +474,12 @@ console.log('\n11. input guards, geometry and device speed (bin/mutate survivors
   r = rig({ refuse: true }); r.k.hold(); await tick(); r.hide(); r.show(); await tick();
   check('a refused lock is retried on return and never throws', r.nav.asked === 2 && !r.k.held);
 
+  r = rig(); r.show(); await tick();
+  check('coming back to the page before any hold() takes no lock', r.nav.asked === 0 && !r.k.held);
+
+  r = rig(); r.k.hold(); r.k.hold(); r.show(); await tick();
+  check('a second hold while the first request is in flight does not ask again (no leaked lock)', r.nav.asked === 1 && r.nav.locks.length === 1);
+
   const doc = { visibilityState: 'visible', n: 0, addEventListener() { this.n++; } };
   const k = screenKeeper({}, doc); k.hold(); k.release();
   check('no wakeLock API: hold/release are no-ops and add no listener', doc.n === 0 && !k.held);
@@ -435,6 +501,11 @@ console.log('\n11. input guards, geometry and device speed (bin/mutate survivors
   check('placeLabel: maxM is configurable', placeLabel(offset({ lat: n[0], lon: n[1] }, 120, 0), L, { maxM: 200 }) === '120 m N of North Hall');
   check('placeLabel: no spot / bad coords / no list -> null',
     placeLabel(null, L) === null && placeLabel({ lat: NaN, lon: 1 }, L) === null && placeLabel({ lat: 1, lon: 1 }) === null);
+  const o = (m, b) => offset({ lat: n[0], lon: n[1] }, m, b);
+  check('placeLabel: "at" means under 15 m', placeLabel(o(14.5, 0), L) === 'at North Hall' && placeLabel(o(15.5, 0), L) === '15 m N of North Hall');
+  check('placeLabel: 80 m is the edge', placeLabel(o(79.5, 0), L) === '80 m N of North Hall' && placeLabel(o(80.5, 0), L) === null);
+  check('placeLabel: 160 deg reads S and 350 deg reads N (the bins wrap)',
+    placeLabel(o(40, 160), L) === '40 m S of North Hall' && placeLabel(o(40, 350), L) === '40 m N of North Hall');
   check('placeLabel: string coords from storage still work', placeLabel({ lat: String(n[0]), lon: String(n[1]) }, L) === 'at North Hall');
   // The real bundled list: a spot outside Green Library resolves to it; Palo Alto airport does not.
   const green = LANDMARKS.find(r => r[2] === 'Cecil H. Green Library');
@@ -567,6 +638,74 @@ console.log('\n11. input guards, geometry and device speed (bin/mutate survivors
   check('holidayNote: closure names the holidays inside it',
     holidayNote(CLOSURE_TUE) === 'Winter closure: enforced as posted, except university holidays Dec 24, Dec 25 and Jan 1');
   check('holidayNote: an ordinary day is null', holidayNote(MON_10AM) === null && holidayNote(SAT_NOON) === null);
+  // Mutation-audit, 2026-10-26: the checks above never stood on a boundary (6:00 sharp,
+  // 4 pm sharp, 2 am sharp), never asked about Thursday or Sunday, and only tested inRing
+  // on a rectangle, whose crossing formula is constant. Each line below killed a survivor.
+  const T = iso => stanfordClock(at(iso));
+  check('boundary: permit is on at 6:00 sharp, off at 4:00 pm sharp',
+    ruleNow(P, T('2026-10-26T13:00:00Z')).text === 'enforced until 4 pm'
+    && ruleNow(P, T('2026-10-26T23:00:00Z')).text === 'not enforced until tomorrow 6 am');
+  check('boundary: overnight rule is off at 2:00 am sharp, and on (not just labelled) at 1 am',
+    ruleNow(RULES.evening, T('2026-10-27T09:00:00Z')).on === false && ruleNow(RULES.evening, stanfordClock(TUE_1AM)).on === true);
+  check('boundary: Oval on at 6:30 am, off at 6:30 pm; visitor off at 4:30 pm',
+    ruleNow(RULES.oval, T('2026-10-26T13:30:00Z')).on && ruleNow(RULES.oval, T('2026-10-27T01:30:00Z')).text === 'not enforced until tomorrow 6 am'
+    && ruleNow(RULES.visitor, T('2026-10-26T23:30:00Z')).text === 'not enforced until tomorrow 8 am');
+  const week = ['2026-10-25', '2026-10-26', '2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30', '2026-10-31'];
+  check('every day: permit on 10 am Mon-Fri only',
+    week.map(d => ruleNow(P, T(d + 'T17:00:00Z')).on ? 1 : 0).join('') === '0111110');
+  check('every day: the evening rule is on at 5 pm all seven days, and runs past midnight into each',
+    ['2026-10-26', '2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01'].every(d => ruleNow(RULES.evening, T(d + 'T00:00:00Z')).on)
+    && week.every(d => ruleNow(RULES.evening, T(d + 'T08:00:00Z')).on));
+  check('weekday math: Saturday before MLK Day waits for Tuesday', ruleNow(P, T('2026-01-17T20:00:00Z')).text === 'not enforced until Tue 6 am'
+    && hoursFree(P, T('2026-01-17T20:00:00Z')) === 66);
+  check('hoursFree: 5 am Monday is 1 h, not 25', hoursFree(P, stanfordClock(MON_5AM)) === 1);
+  const friNight = { label: 'x', days: [5], from: 20, to: 26 };
+  check('overnight rule that starts Friday is on at 1 am Saturday, off at 1 am Friday',
+    ruleNow(friNight, T('2026-10-31T08:00:00Z')).on === true && ruleNow(friNight, T('2026-10-30T08:00:00Z')).on === false);
+  check('a once-a-week rule a week out names the date, not the weekday',
+    ruleNow({ label: 'x', days: [1], from: 6, to: 16 }, stanfordClock(MON_5PM)).text === 'not enforced until Nov 2 6 am');
+  check('a rule with no days is never on and never free-until',
+    JSON.stringify(ruleNow({ label: 'x', days: [], from: 6, to: 16 }, stanfordClock(MON_5PM))) === '{"on":false,"text":"not enforced"}'
+    && hoursFree({ label: 'x', days: [], from: 6, to: 16 }, stanfordClock(MON_5PM)) === Infinity);
+  const tri = [[37.4200, -122.1700], [37.4200, -122.1600], [37.4300, -122.1700]];   // hypotenuse lat = 37.43 - (lon + 122.17)
+  const zt = { markers: [], lots: [['C', 'Tri', [tri]]], shared: [] };
+  check('zoneAt: a slanted lot edge is honoured on both sides',
+    zoneAt({ lat: 37.4270, lon: -122.1680 }, zt)?.lot === 'Tri' && zoneAt({ lat: 37.4290, lon: -122.1680 }, zt) === null
+    && zoneAt({ lat: 37.4210, lon: -122.1620 }, zt)?.lot === 'Tri' && zoneAt({ lat: 37.4210, lon: -122.1595 }, zt) === null);
+  // On a vertex's exact meridian the crossing test must stay half-open: '>=' on either side
+  // made every point due south of a real lot read as inside it (found by a grid sweep).
+  check('zoneAt: a point on a vertex\'s meridian, outside the lot, is outside',
+    [-122.1700, -122.1600].every(o => zoneAt({ lat: 37.4100, lon: o }, zt) === null && zoneAt({ lat: 37.4400, lon: o }, zt) === null));
+  const m0 = { lat: 37.4000, lon: -122.1600 };
+  const zm = { markers: [[m0.lat, m0.lon, 'C']], lots: [], shared: [] };
+  check('zoneAt: street markers count to 40 m and no further', zoneAt(offset(m0, 39.5, 90), zm)?.types === 'C' && zoneAt(offset(m0, 40.5, 90), zm) === null);
+  // Literal radii: reading s.r back out of SHARED would move with a mutated table.
+  check('zoneAt: each shared lot\'s radius is the published one (90, 60, 70, 80 m)',
+    SHARED.length === 4 && [90, 60, 70, 80].every((r, i) => zoneAt(offset(SHARED[i], r - 0.5, 0), { markers: [], lots: [] })?.shared === SHARED[i]
+      && zoneAt(offset(SHARED[i], r + 0.5, 0), { markers: [], lots: [], shared: [SHARED[i]] }) === null));
+  check('zoneLine: the Blackwelder lot reads the C-evening rule',
+    zoneLine(zoneAt(SHARED[0], { markers: [], lots: [] }), MON_5PM) === "Blackwelder / EVGR-A shared lot · 'C' enforced until 2 am");
+  const box = (q, d = 0.0002) => [[q.lat - d, q.lon - d], [q.lat - d, q.lon + d], [q.lat + d, q.lon + d], [q.lat + d, q.lon - d]];
+  const edge = freeLots(near, { lots: [['C', 'In', [box(offset(near, 1499.5, 0))]], ['C', 'Out', [box(offset(near, 1500.5, 0))]]], shared: [] }, SAT_NOON);
+  check('freeLots: 1.5 km means 1499.5 m in, 1500.5 m out', edge.map(r => r.lot).join() === 'In' && edge.nearby === 1);
+  const six = [600, 100, 500, 200, 400, 300].map(mm => ['C', 'L' + mm, [box(offset(near, mm, 0))]]);
+  check('freeLots: the default list is 5 long, nearest first from scrambled input',
+    freeLots(near, { lots: six, shared: [] }, SAT_NOON).map(r => r.lot).join() === 'L100,L200,L300,L400,L500');
+  check('freeLots: a permit-only multi-type lot names its permit letters',
+    freeLots(near, { lots: [['ACT', 'Mixed', [box(offset(near, 50, 0))]]], shared: [] }, SAT_NOON)[0]?.kind === 'A/C permit');
+  check('holidayNote: first day of the closure is a closure day', holidayNote(at('2026-12-21T18:00:00Z')).startsWith('Winter closure:'));
+  check('holidayNote: two holidays read "X and Y", none reads nothing',
+    holidayNote(CLOSURE_TUE, { closures: [['2026-12-21', '2026-12-31']] }) === 'Winter closure: enforced as posted, except university holidays Dec 24 and Dec 25'
+    && holidayNote(CLOSURE_TUE, { closures: [['2026-12-21', '2026-12-24']] }) === 'Winter closure: enforced as posted, except university holidays Dec 24'
+    && holidayNote(CLOSURE_TUE, { closures: [['2026-12-21', '2026-12-23']] }) === 'Winter closure: enforced as posted');
+  check('holidayNote: a closure includes its last day and a holiday on its first',
+    holidayNote(at('2026-12-23T18:00:00Z'), { closures: [['2026-12-21', '2026-12-23']] }) === 'Winter closure: enforced as posted'
+    && holidayNote(at('2026-12-28T18:00:00Z'), { closures: [['2026-12-24', '2026-12-31']] }) === 'Winter closure: enforced as posted, except university holidays Dec 24 and Dec 25');
+  check('overnight: a rule ending at 1 am is on at 0:30',
+    ruleNow({ label: 'x', days: [0, 1, 2, 3, 4, 5, 6], from: 20, to: 25 }, T('2026-10-27T07:30:00Z')).on === true);
+  check('overnight: a holiday-lifted night rule stays lifted past midnight, and only that night',
+    ruleNow({ label: 'x', days: [1, 2, 3, 4, 5], from: 20, to: 26, holidays: true }, T('2026-11-27T09:00:00Z')).on === false
+    && ruleNow({ label: 'x', days: [1, 2, 3, 4, 5], from: 20, to: 26, holidays: true }, T('2026-11-26T09:00:00Z')).on === true);
   check('HOLIDAYS: 20 dates, all valid, all weekdays', HOLIDAYS.size === 20
     && [...HOLIDAYS.keys()].every(d => { const w = new Date(d + 'T12:00:00Z').getUTCDay(); return w >= 1 && w <= 5; }));
 }
