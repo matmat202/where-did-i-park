@@ -305,6 +305,7 @@ function paint(){
     $('sincewhen').textContent = 'Start tracking before you drive, or mark the spot by hand.';
     $('strip').replaceChildren(Object.assign(document.createElement('span'),
       {textContent:'No parking event stored.'}));
+    delete $('strip').dataset.key;
     $('needle').style.opacity = '.22';
     return;
   }
@@ -339,13 +340,21 @@ function paint(){
     p.walkedAwayM != null ? `confirmed after ${p.walkedAwayM} m on foot` : 'marked by hand',
     heading != null ? 'arrow follows your phone' : 'arrow is north-up',
   ].filter(Boolean);
+  // paint() runs every 30 s; rebuilding an unchanged strip removed the walk link from
+  // under keyboard/VoiceOver focus and dropped it to <body> (probe, 2026-10-26).
+  const href = walkLink(p, APPLE), stripKey = bits.join('\n') + '\n' + href;
+  const strip = $('strip');
+  if (strip.dataset.key === stripKey) return;
+  const hadFocus = strip.contains(document.activeElement);
   const frag = document.createDocumentFragment();
   bits.forEach(t => frag.append(Object.assign(document.createElement('span'), {textContent:t})));
   const link = document.createElement('a');
-  link.href = walkLink(p, APPLE);
+  link.href = href;
   link.target = '_blank'; link.rel = 'noopener'; link.textContent = 'walk there in maps';
   frag.append(link);
-  $('strip').replaceChildren(frag);
+  strip.replaceChildren(frag);
+  strip.dataset.key = stripKey;
+  if (hadFocus) link.focus({ preventScroll: true });
 }
 
 function paintState(state, speed){
