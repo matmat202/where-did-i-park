@@ -484,9 +484,16 @@ function paintHoliday(){
 }
 paintHoliday();
 
+/* The answer this panel is showing, so refreshFree() can tell a real change from a
+   needless repaint. Needless repaints cost focus: rebuilding the <ul> drops a focused
+   "directions" link, which is the same bug kbd-nav fixed on the walk link. */
+let freeSig = null;
+const freeSigOf = rows => JSON.stringify([rows.nearby, rows.map(r => [r.lot, r.m, r.kind, r.text])]);
+
 function paintFree(at){
   paintHoliday();
   const rows = freeLots(at, { lots: LOTS });
+  freeSig = freeSigOf(rows);
   const ul = $('free');
   ul.hidden = false;
   if (!rows.length){
@@ -560,8 +567,23 @@ $('btn-demo').onclick = () => {
   }, 60);
 };
 
+/* paintFree() used to run only from its own button, so the free-lots list was frozen
+   at whatever time you tapped it. Measured on the live site 2026-10-26: a list painted
+   at 11pm ("not enforced until tomorrow 6 am") was still on screen at 9am after a full
+   30 s tick, when a fresh click said all 52 lots in range were enforced. Telling someone
+   to park where they will be ticketed is the worst thing this page can do, so the panel
+   now follows the clock, and follows it again when a backgrounded tab comes back. */
+function refreshFree(){
+  if (!here || $('free').hidden) return;
+  if (freeSigOf(freeLots(here, { lots: LOTS })) === freeSig) return;
+  paintFree(here);
+}
+const fresh = () => { if (load()) paint(); refreshFree(); };
+
 paint();
-setInterval(() => { if (load()) paint(); }, 30_000);   // keep "x min ago" honest
+setInterval(fresh, 30_000);   // keep "x min ago" honest, and the free list with it
+document.addEventListener('visibilitychange', () => { if (!document.hidden) fresh(); });
+window.addEventListener('pageshow', (e) => { if (e.persisted) fresh(); });
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 
