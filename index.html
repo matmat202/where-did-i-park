@@ -275,7 +275,7 @@ const det = new ParkingDetector({}, ev => {
   if (ev.type === 'park') {
     save(ev.at);
     addLog('park', `${ev.at.mode === 'bike' ? 'Bike' : 'Car'} parked — you walked ${ev.at.walkedAwayM} m away`, ev.t);
-    banner(`Recorded your ${ev.at.mode} at ${new Date(ev.at.atMs).toLocaleTimeString()}.`);
+    banner(`Recorded your ${ev.at.mode} at ${new Date(ev.at.atMs).toLocaleTimeString('en-US')}.`);
   } else if (ev.type === 'candidate') {
     addLog('candidate', `Possible stop (${ev.at.mode}) — waiting to see if you walk away`, ev.t);
   } else if (ev.type === 'cancel') {
@@ -331,7 +331,7 @@ function paint(){
   }
 
   $('sincewhen').textContent =
-    `Your ${label} was parked ${ago(p.atMs)} (${new Date(p.atMs).toLocaleString(undefined,
+    `Your ${label} was parked ${ago(p.atMs)} (${new Date(p.atMs).toLocaleString('en-US',
       {weekday:'short', hour:'numeric', minute:'2-digit'})})`;
 
   const bits = [
@@ -373,7 +373,7 @@ function addLog(kind, msg, t){
   ul.replaceChildren(...log.slice(0, 50).map(e => {
     const li = document.createElement('li');
     const time = document.createElement('time');
-    time.textContent = new Date(e.t).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
+    time.textContent = new Date(e.t).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
     const k = document.createElement('span'); k.className = 'k ' + e.kind; k.textContent = e.kind;
     const m = document.createElement('span'); m.className = 'msg'; m.textContent = e.msg;
     li.append(time, k, m);
