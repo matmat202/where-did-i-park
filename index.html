@@ -152,6 +152,7 @@ footer{margin-top:26px;padding-top:14px;border-top:1px solid var(--line);font-si
   color:var(--muted)}
 footer p{margin:5px 0;max-width:62ch}
 a{color:var(--link)}
+.sr-only{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 </style>
 
 <div class="wrap">
@@ -218,6 +219,7 @@ a{color:var(--link)}
   </section>
 
   <div class="banner" id="banner" hidden></div>
+  <div class="sr-only" id="said" role="status"></div>
 
   <details class="how">
     <summary>How it decides you parked</summary>
@@ -379,7 +381,10 @@ function addLog(kind, msg, t){
   }));
 }
 
-function banner(text){ const b = $('banner'); b.textContent = text; b.hidden = false; }
+// The banner is hidden until it has something to say, and a region that leaves the
+// accessibility tree is not announced; so its text is mirrored into an always-present
+// live region, or "Spot saved" reaches a screen reader as silence (AX probe, 2026-10-26).
+function banner(text){ const b = $('banner'); b.textContent = text; b.hidden = false; $('said').textContent = text; }
 
 /* ---------- geolocation ---------- */
 function onFix(pos){
