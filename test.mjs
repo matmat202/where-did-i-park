@@ -598,6 +598,8 @@ console.log('\n12. thresholds stood on exactly, and the median (bin/mutate survi
   check('freeLots: 7 am Monday only visitor spaces are free', f7.length === 1 && f7[0].lot === 'Garage' && f7[0].kind === 'visitor');
   check('freeLots: C lots free after 4 pm say tomorrow 6 am', freeLots(near, { lots: FL }, MON_5PM)[0].text === 'not enforced until tomorrow 6 am');
   check('freeLots: bad coords -> []', freeLots({ lat: NaN, lon: 0 }, { lots: FL }).length === 0 && freeLots(null, { lots: FL }).length === 0);
+  // A good lat with a bad lon must stop too: past the guard, NaN > maxM is false and every lot comes back at NaN metres.
+  check('freeLots: a bad lon alone -> []', freeLots({ lat: near.lat, lon: NaN }, { lots: FL }, SAT_NOON).length === 0 && freeLots({ lat: near.lat, lon: 'x' }, { lots: FL }, SAT_NOON).length === 0);
   check('freeLots: limit caps the list', freeLots(near, { lots: FL }, SAT_NOON, { limit: 1 }).length === 1);
   const quad = { lat: 37.4275, lon: -122.1697 };
   const realSat = freeLots(quad, real, SAT_NOON);
