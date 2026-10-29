@@ -6,7 +6,7 @@
  */
 import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, screenKeeper, placeLabel, DEFAULTS } from './detector.js';
 import { LANDMARKS } from './landmarks.js';
-import { zoneAt, zoneLine, ruleNow, stanfordClock, RULES, SHARED, hoursFree, freeLots, holidayNote, HOLIDAYS } from './zone.js';
+import { zoneAt, zoneLine, ruleNow, stanfordClock, RULES, SHARED, hoursFree, freeLots, holidayNote, HOLIDAYS, moveBy, moveByICS } from './zone.js';
 import { MARKERS, LOTS } from './zones.js';
 
 const ORIGIN = { lat: 37.4275, lon: -122.1697 };   // Stanford-ish
@@ -559,6 +559,32 @@ console.log('\n12. thresholds stood on exactly, and the median (bin/mutate survi
   check('zoneLine: 20-min only says nothing', zoneLine({ types: 'T', lot: '' }, MON_10AM) === null);
   check('zoneLine: 20-min alongside C is flagged', zoneLine({ types: 'CT', lot: '' }, MON_10AM) === 'C permit · enforced until 4 pm; 20-min spaces as posted');
   check('zoneLine: null zone -> null', zoneLine(null) === null);
+
+  // moveBy: the alarm for a car left where enforcement is about to start.
+  const SUN_9PM = at('2026-10-26T04:00:00Z'), FRI_6PM = at('2026-10-31T01:00:00Z');
+  const mbC = moveBy({ types: 'C', lot: '' }, SUN_9PM);
+  check('moveBy: C lot Sunday 9 pm -> Mon 6 am, 9 h off', !!mbC && mbC.ymd === '2026-10-26' && mbC.hour === 6
+    && mbC.hours === 9 && mbC.label === 'tomorrow 6 am' && mbC.kind === 'C permit');
+  check('moveBy: 5 am weekday -> today 6 am', moveBy({ types: 'C', lot: '' }, MON_5AM)?.label === 'today 6 am');
+  check('moveBy: already enforced -> null', moveBy({ types: 'C', lot: '' }, MON_10AM) === null);
+  check('moveBy: one rule enforced at a mixed spot -> null (7 am: permit on, visitor not)',
+    moveBy({ types: 'ACV', lot: 'G' }, MON_7AM) === null);
+  check('moveBy: the earliest start wins (C 6 am before visitor 8 am)',
+    moveBy({ types: 'CV', lot: '' }, SUN_9PM)?.kind === 'C permit');
+  check('moveBy: Saturday noon is 42 h off -> null at 18 h, Mon at 48 h',
+    moveBy({ types: 'C', lot: '' }, SAT_NOON) === null && moveBy({ types: 'C', lot: '' }, SAT_NOON, { within: 48 })?.label === 'Mon 6 am');
+  check('moveBy: Friday 6 pm -> null (Monday is not tonight\'s problem)', moveBy({ types: 'C', lot: '' }, FRI_6PM) === null);
+  check('moveBy: 24/7 shared lot -> null', moveBy(shz, SAT_NOON) === null);
+  check('moveBy: overnight shared lot at 3 am -> 4 pm today', moveBy({ shared: SHARED[0] }, TUE_3AM)?.label === 'today 4 pm');
+  check('moveBy: 20-min only / no zone -> null', moveBy({ types: 'T', lot: '' }, SUN_9PM) === null && moveBy(null) === null);
+  // Thanksgiving (Thu 11-26) and the Friday after are holidays: Wed 6 pm waits for Mon.
+  check('moveBy: holiday lifts the next start (Wed before Thanksgiving -> null at 18 h)',
+    moveBy({ types: 'C', lot: '' }, at('2026-11-26T02:00:00Z')) === null);
+  const ics = moveByICS(mbC, { lat: 37.42, lon: -122.165 }, at('2026-10-25T00:00:00Z'));
+  check('moveByICS: Stanford-time start, 30-min alarm, CRLF', ics.includes('DTSTART;TZID=America/Los_Angeles:20261026T060000\r\n')
+    && ics.includes('TRIGGER:-PT30M') && ics.startsWith('BEGIN:VCALENDAR\r\n') && ics.endsWith('END:VCALENDAR\r\n')
+    && !/[^\r]\n/.test(ics));
+  check('moveByICS: commas in the summary are escaped', moveByICS({ ...mbC, kind: 'A, C permit' }, { lat: 1, lon: 2 }).includes('A\\, C permit'));
 
   // The real bundled data.
   check('zones.js: markers well-formed, all four kinds present',

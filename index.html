@@ -255,7 +255,7 @@ a{color:var(--link)}
 <script type="module">
 import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, screenKeeper, placeLabel, STATE } from './detector.js';
 import { LANDMARKS } from './landmarks.js';
-import { zoneAt, zoneLine, freeLots, holidayNote } from './zone.js';
+import { zoneAt, zoneLine, freeLots, holidayNote, moveBy, moveByICS } from './zone.js';
 import { MARKERS, LOTS } from './zones.js';
 const awake = screenKeeper(navigator, document);
 // Apple Maps ships on every iPhone, iPad and Mac, so those get its walking route.
@@ -334,9 +334,13 @@ function paint(){
     `Your ${label} was parked ${ago(p.atMs)} (${new Date(p.atMs).toLocaleString('en-US',
       {weekday:'short', hour:'numeric', minute:'2-digit'})})`;
 
+  const zone = zoneAt(p, { markers: MARKERS, lots: LOTS });
+  // A car left where enforcement starts within 18 h gets a calendar alarm (measured
+  // 2026-10-29: a third of 8 h stays and half of 12 h stays in a free lot run into it).
+  const mb = p.mode === 'bike' ? null : moveBy(zone);   // permits are for cars
   const bits = [
     placeLabel(p, LANDMARKS),
-    zoneLine(zoneAt(p, { markers: MARKERS, lots: LOTS })),
+    zoneLine(zone),
     `${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`,
     p.accuracy != null ? `±${Math.round(p.accuracy)} m fix` : null,
     p.walkedAwayM != null ? `confirmed after ${p.walkedAwayM} m on foot` : 'marked by hand',
@@ -344,19 +348,32 @@ function paint(){
   ].filter(Boolean);
   // paint() runs every 30 s; rebuilding an unchanged strip removed the walk link from
   // under keyboard/VoiceOver focus and dropped it to <body> (probe, 2026-10-26).
-  const href = walkLink(p, APPLE), stripKey = bits.join('\n') + '\n' + href;
+  const href = walkLink(p, APPLE), stripKey = bits.join('\n') + '\n' + href + '\n' + (mb ? mb.ymd + mb.hour : '');
   const strip = $('strip');
   if (strip.dataset.key === stripKey) return;
-  const hadFocus = strip.contains(document.activeElement);
+  const hadFocus = strip.contains(document.activeElement), hadRem = document.activeElement?.id === 'moveby';
   const frag = document.createDocumentFragment();
   bits.forEach(t => frag.append(Object.assign(document.createElement('span'), {textContent:t})));
   const link = document.createElement('a');
   link.href = href;
   link.target = '_blank'; link.rel = 'noopener'; link.textContent = 'walk there in maps';
   frag.append(link);
+  if (mb) {
+    const rem = document.createElement('a');
+    rem.href = '#'; rem.id = 'moveby';
+    rem.textContent = `remind me to move it by ${mb.label}`;
+    rem.addEventListener('click', ev => {
+      ev.preventDefault();
+      const url = URL.createObjectURL(new Blob([moveByICS(mb, p)], { type: 'text/calendar' }));
+      const a = Object.assign(document.createElement('a'), { href: url, download: 'move-the-car.ics' });
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    });
+    frag.append(rem);
+  }
   strip.replaceChildren(frag);
   strip.dataset.key = stripKey;
-  if (hadFocus) link.focus({ preventScroll: true });
+  if (hadFocus) ((hadRem && $('moveby')) || link).focus({ preventScroll: true });
 }
 
 function paintState(state, speed){

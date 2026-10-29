@@ -199,3 +199,62 @@ export function freeLots(p, { lots, shared = SHARED }, date = new Date(), { maxM
   rows.sort((a, b) => a.m - b.m).splice(limit);
   return rows;
 }
+
+/**
+ * When must a car at `zone` move, if nothing there is enforced now? -> { ymd, hour, hours,
+ * kind, label } for the earliest enforcement start within `within` hours, e.g. a C lot on
+ * Sunday night gives { ymd: '2026-11-02', hour: 6, kind: 'C permit', label: 'Mon 6 am' }.
+ * Null when any rule at the spot is enforced already (the driver either holds that permit
+ * or the warning is late), when it is 24/7, when there is no zone, or when the start is
+ * further off than `within` (a Friday-evening park does not need a Monday alarm today).
+ * `hours` counts Stanford wall-clock hours, so it can be an hour out across a DST change;
+ * ymd/hour are wall-clock and are what the calendar file uses.
+ */
+export function moveBy(zone, date = new Date(), { within = 18 } = {}) {
+  if (!zone) return null;
+  const now = stanfordClock(date);
+  const kinds = zone.shared
+    ? [[zone.shared.rule, `${zone.shared.name} (${RULES[zone.shared.rule].label})`]]
+    : Object.entries([...zone.types].reduce((g, t) => (GROUP[t] && (g[GROUP[t]] ||= []).push(t), g), {}))
+        .map(([g, ts]) => [g, g === 'permit' ? `${ts.join('/')} permit` : RULES[g].label]);
+  let best = null;
+  for (const [g, kind] of kinds) {
+    const h = hoursFree(RULES[g], now);
+    if (h === 0 || !Number.isFinite(h)) return null;
+    if (!best || h < best.hours) best = { hours: h, kind, rule: RULES[g] };
+  }
+  if (!best || best.hours > within) return null;
+  const k = Math.round((now.hour + best.hours - best.rule.from) / 24);
+  const ymd = addDays(now.ymd, k);
+  const when = k === 0 ? 'today' : k === 1 ? 'tomorrow' : DAY[(now.day + k) % 7];
+  return { ymd, hour: best.rule.from, hours: best.hours, kind: best.kind, label: `${when} ${clockLabel(best.rule.from)}` };
+}
+
+const pad2 = n => String(n).padStart(2, '0');
+const icsEsc = s => String(s).replace(/[\;,]/g, c => '\\' + c).replace(/\n/g, '\\n');
+/**
+ * A one-event calendar file for moveBy(): the event sits at the enforcement start in
+ * Stanford time (TZID, so the phone's zone and DST don't move it) and alarms 30 minutes
+ * before. The UID is per spot and start, so re-adding the same reminder replaces it.
+ */
+export function moveByICS(mb, spot, stamp = new Date()) {
+  const z = stamp.toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+  const d = mb.ymd.replace(/-/g, ''), t = `T${pad2(mb.hour)}0000`;
+  const end = `T${pad2(mb.hour)}1500`;
+  const where = `${spot.lat.toFixed(5)},${spot.lon.toFixed(5)}`;
+  return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//where-did-i-park//move-by//EN',
+    'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
+    'BEGIN:VTIMEZONE', 'TZID:America/Los_Angeles',
+    'BEGIN:DAYLIGHT', 'TZOFFSETFROM:-0800', 'TZOFFSETTO:-0700', 'TZNAME:PDT',
+    'DTSTART:19700308T020000', 'RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU', 'END:DAYLIGHT',
+    'BEGIN:STANDARD', 'TZOFFSETFROM:-0700', 'TZOFFSETTO:-0800', 'TZNAME:PST',
+    'DTSTART:19701101T020000', 'RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU', 'END:STANDARD',
+    'END:VTIMEZONE',
+    'BEGIN:VEVENT', `UID:${d}${t}-${where.replace(/[^0-9]/g, '')}@where-did-i-park`, `DTSTAMP:${z}`,
+    `DTSTART;TZID=America/Los_Angeles:${d}${t}`, `DTEND;TZID=America/Los_Angeles:${d}${end}`,
+    `SUMMARY:${icsEsc(`Move the car: ${mb.kind} enforced from ${clockLabel(mb.hour)}`)}`,
+    `GEO:${spot.lat.toFixed(5)};${spot.lon.toFixed(5)}`, `LOCATION:${icsEsc(where)}`,
+    `DESCRIPTION:${icsEsc('Default Stanford enforcement hours; a posted sign always wins.')}`,
+    'BEGIN:VALARM', 'ACTION:DISPLAY', 'TRIGGER:-PT30M', 'DESCRIPTION:Move the car', 'END:VALARM',
+    'END:VEVENT', 'END:VCALENDAR'].join('\r\n') + '\r\n';
+}
