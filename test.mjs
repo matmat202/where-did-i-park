@@ -574,6 +574,18 @@ console.log('\n12. thresholds stood on exactly, and the median (bin/mutate survi
   check('moveBy: Saturday noon is 42 h off -> null at 18 h, Mon at 48 h',
     moveBy({ types: 'C', lot: '' }, SAT_NOON) === null && moveBy({ types: 'C', lot: '' }, SAT_NOON, { within: 48 })?.label === 'Mon 6 am');
   check('moveBy: Friday 6 pm -> null (Monday is not tonight\'s problem)', moveBy({ types: 'C', lot: '' }, FRI_6PM) === null);
+  // Boundaries mutwatch found unpinned (2026-11-03): each check below kills one survivor.
+  check('moveBy: a start exactly `within` hours off still counts (9 h at within 9)',
+    moveBy({ types: 'C', lot: '' }, SUN_9PM, { within: 9 })?.hours === 9);
+  const SUN_11AM = at('2026-10-25T18:00:00Z');   // Mon 6 am is 19 h off
+  check('moveBy: the default window is 18 h (19 h off -> null, but found at within 19)',
+    moveBy({ types: 'C', lot: '' }, SUN_11AM) === null && moveBy({ types: 'C', lot: '' }, SUN_11AM, { within: 19 })?.hours === 19);
+  check('moveBy: a tie keeps the first kind (permit and Oval A both start Mon 6 am)',
+    moveBy({ types: 'CO', lot: '' }, SUN_9PM)?.kind === 'C permit');
+  // Winter closure is enforced as posted (holidayNote), so Fri 12-18 evening -> Mon 12-21.
+  const closure = moveBy({ types: 'C', lot: '' }, at('2026-12-19T02:00:00Z'), { within: 72 });
+  check('moveBy: the winter closure is not a holiday (Fri 12-18 6 pm -> Mon 12-21 6 am)',
+    closure?.ymd === '2026-12-21' && closure?.label === 'Mon 6 am', JSON.stringify(closure));
   check('moveBy: 24/7 shared lot -> null', moveBy(shz, SAT_NOON) === null);
   check('moveBy: overnight shared lot at 3 am -> 4 pm today', moveBy({ shared: SHARED[0] }, TUE_3AM)?.label === 'today 4 pm');
   check('moveBy: 20-min only / no zone -> null', moveBy({ types: 'T', lot: '' }, SUN_9PM) === null && moveBy(null) === null);
