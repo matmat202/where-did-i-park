@@ -497,6 +497,8 @@ console.log('\n12. thresholds stood on exactly, and the median (bin/mutate survi
   check('placeLabel: direction is FROM the building TO the spot', placeLabel(se, L) === '30 m SE of North Hall');
   const mid = offset({ lat: 37.4290, lon: -122.1700 }, 20, 0);   // 20 m N of South, ~91 m S of North
   check('placeLabel: picks the nearest, not the first', placeLabel(mid, L) === '20 m N of South Hall');
+  check('placeLabel: two names on one point, the first listed wins',
+    placeLabel({ lat: n[0], lon: n[1] }, [[n[0], n[1], 'First'], [n[0], n[1], 'Second']]) === 'at First');
   check('placeLabel: past maxM says nothing', placeLabel(offset({ lat: n[0], lon: n[1] }, 120, 0), L) === null);
   check('placeLabel: maxM is configurable', placeLabel(offset({ lat: n[0], lon: n[1] }, 120, 0), L, { maxM: 200 }) === '120 m N of North Hall');
   check('placeLabel: no spot / bad coords / no list -> null',
