@@ -71,6 +71,8 @@ h1 em{font-style:normal;color:var(--accent)}
 .compass{font-family:var(--f-sign);text-transform:uppercase;letter-spacing:.07em;
   font-size:14px;color:var(--accent);margin-top:5px}
 .sincewhen{color:var(--muted);font-size:12.5px;margin-top:7px;font-variant-numeric:tabular-nums}
+.answer .guide{padding:0 18px 14px}
+.answer .guide:has(> [hidden]){display:none}
 .answer .strip{background:var(--sunk);border-top:1px solid var(--line);padding:9px 18px;
   font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:4px 16px}
 .answer.none .dist{color:var(--muted);font-size:clamp(19px,4.6vw,24px);font-family:var(--f-body);
@@ -186,6 +188,7 @@ a{color:var(--link)}
         <div class="sincewhen" id="sincewhen">Start tracking before you drive, or mark the spot by hand.</div>
       </div>
     </div>
+    <div class="guide"><button class="primary" id="btn-guide" type="button" hidden>Guide me to it</button></div>
     <div class="strip" id="strip"><span>No parking event stored.</span></div>
   </section>
 
@@ -255,7 +258,7 @@ a{color:var(--link)}
 </div>
 
 <script type="module">
-import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, screenKeeper, placeLabel, STATE } from './detector.js';
+import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, guideWatch, screenKeeper, placeLabel, STATE } from './detector.js';
 import { LANDMARKS } from './landmarks.js';
 import { zoneAt, zoneLine, freeLots, holidayNote, moveBy, moveByICS } from './zone.js';
 import { MARKERS, LOTS } from './zones.js';
@@ -288,7 +291,7 @@ const det = new ParkingDetector({}, ev => {
 /* ---------- storage ---------- */
 function save(p){ try { localStorage.setItem(KEY, JSON.stringify(p)); } catch {} paint(); }
 function load(){ try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { return null; } }
-function forget(){ try { localStorage.removeItem(KEY); } catch {} det.parked = null; paint(); }
+function forget(){ try { localStorage.removeItem(KEY); } catch {} det.parked = null; stopGuide(); paint(); }
 
 /* ---------- painting ---------- */
 function ago(ms){
@@ -301,6 +304,7 @@ function ago(ms){
 
 function paint(){
   const p = load();
+  paintGuide(p);
   const a = $('answer');
   if (!p){
     a.classList.add('none');
@@ -418,10 +422,11 @@ function onFix(pos){
   paint();
 }
 
+const geoWhy = err => ({1:'Permission denied — allow location access to track automatically.',
+                         2:'Position unavailable. Move somewhere with a clearer view of the sky.',
+                         3:'Timed out waiting for a fix.'}[err.code] || err.message);
 function onGeoError(err){
-  const why = {1:'Permission denied — allow location access to track automatically.',
-               2:'Position unavailable. Move somewhere with a clearer view of the sky.',
-               3:'Timed out waiting for a fix.'}[err.code] || err.message;
+  const why = geoWhy(err);
   banner(why);
   addLog('cancel', why);
   stopTracking();
@@ -429,6 +434,7 @@ function onGeoError(err){
 
 function startTracking(){
   if (!navigator.geolocation){ banner('This browser has no geolocation support.'); return; }
+  stopGuide();   // tracking gives a position too, and feeds the detector
   watchId = navigator.geolocation.watchPosition(onFix, onGeoError,
     {enableHighAccuracy:true, maximumAge:0, timeout:20000});
   $('btn-track').textContent = 'Stop tracking';
@@ -436,6 +442,7 @@ function startTracking(){
   addLog('candidate', 'Tracking started');
   requestHeading();
   awake.hold();
+  paintGuide();
 }
 
 function stopTracking(){
@@ -444,7 +451,33 @@ function stopTracking(){
   awake.release();
   $('btn-track').textContent = 'Start tracking';
   $('btn-track').classList.remove('live');
+  paintGuide();
 }
+
+/* Guiding: position for the arrow and distance only, never fed to the detector, so
+   walking back to the car cannot record a false park. Starts by itself on opening when
+   location is already allowed; the button is still needed for the compass on iPhone,
+   which grants heading only from a tap. */
+let guideStop = null;
+function paintGuide(p = load()){
+  const b = $('btn-guide');
+  b.hidden = !p || watchId != null;
+  b.textContent = guideStop ? 'Stop guiding' : 'Guide me to it';
+}
+function startGuide(fromTap){
+  if (guideStop || watchId != null || !navigator.geolocation) return;
+  if (fromTap) requestHeading();
+  guideStop = guideWatch(navigator.geolocation, pos => {
+    here = {lat:pos.coords.latitude, lon:pos.coords.longitude};
+    paint();
+  }, err => {
+    guideStop = null;
+    if (err) banner(geoWhy(err));
+    paintGuide();
+  });
+  paintGuide();
+}
+function stopGuide(){ if (guideStop) guideStop(); }
 
 // iOS sends its heading on plain deviceorientation (webkitCompassHeading); others send it
 // on deviceorientationabsolute. headingFrom() reads both and ignores the relative kind.
@@ -477,6 +510,7 @@ function requestHeading(){
 
 /* ---------- actions ---------- */
 $('btn-track').onclick = () => (watchId == null ? startTracking() : stopTracking());
+$('btn-guide').onclick = () => (guideStop ? stopGuide() : startGuide(true));
 
 let marking = false;
 $('btn-mark').onclick = () => {
@@ -600,6 +634,8 @@ function refreshFree(){
 const fresh = () => { if (load()) paint(); refreshFree(); };
 
 paint();
+if (load() && navigator.permissions) navigator.permissions.query({name:'geolocation'})
+  .then(s => { if (s.state === 'granted') startGuide(false); }).catch(() => {});
 setInterval(fresh, 30_000);   // keep "x min ago" honest, and the free list with it
 document.addEventListener('visibilitychange', () => { if (!document.hidden) fresh(); });
 window.addEventListener('pageshow', (e) => { if (e.persisted) fresh(); });

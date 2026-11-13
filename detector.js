@@ -165,6 +165,30 @@ export function sampleBestFix(geo, done, fail, o = {}) {
 }
 
 /**
+ * Walking back to the car is the moment the page exists for, and it used to have nothing
+ * to give a direction from: `here` came only from tracking, and tracking also feeds the
+ * detector. This watch only steers. onPos(position) per fix; it stops itself after `maxMs`
+ * (battery) or on a hard error, calling onEnd(error|null) once. A timeout (code 3) just
+ * waits for the next fix. Returns stop(), which ends it with onEnd(null).
+ */
+export function guideWatch(geo, onPos, onEnd, o = {}) {
+  const { maxMs = 20 * 60_000, setT = setTimeout, clearT = clearTimeout } = o;
+  let over = false, id = null;
+  const end = why => {
+    if (over) return;
+    over = true; clearT(cap);
+    if (id != null) geo.clearWatch(id);
+    onEnd(why);
+  };
+  const cap = setT(() => end(null), maxMs);
+  id = geo.watchPosition(pos => { if (!over) onPos(pos); },
+    err => { if (!over && err?.code !== 3) end(err); },
+    { enableHighAccuracy: true, maximumAge: 5000 });
+  if (over && id != null) geo.clearWatch(id);   // a fake geo can answer synchronously
+  return () => end(null);
+}
+
+/**
  * Automatic detection only sees fixes while the page is open in front, so tracking holds a
  * screen wake lock. Browsers drop that lock whenever the page is hidden (measured in Chromium:
  * minimise -> released, restore -> still released), so one glance at another app used to

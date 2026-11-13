@@ -4,7 +4,7 @@
  * Each trace is a scripted walk/drive. The point is the negative cases: a detector
  * that fires on a red light is worse than useless, because you would trust it.
  */
-import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, screenKeeper, placeLabel, DEFAULTS } from './detector.js';
+import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, guideWatch, screenKeeper, placeLabel, DEFAULTS } from './detector.js';
 import { LANDMARKS } from './landmarks.js';
 import { zoneAt, zoneLine, ruleNow, stanfordClock, RULES, SHARED, hoursFree, freeLots, holidayNote, HOLIDAYS, moveBy, moveByICS } from './zone.js';
 import { MARKERS, LOTS } from './zones.js';
@@ -334,7 +334,7 @@ console.log('\n11. input guards, geometry and device speed (bin/mutate survivors
     const fix = accuracy => geo.ok({ coords: { latitude: 37.4, longitude: -122.1, accuracy }, timestamp: now });
     const out = { got: null, err: null };
     const run = o => sampleBestFix(geo, p => { out.got = p; }, e => { out.err = e; }, { setT, clearT, ...o });
-    return { geo, fix, advance, out, run, pending: () => timers.size };
+    return { geo, fix, advance, out, run, setT, clearT, pending: () => timers.size };
   }
 
   let r = rig(); r.run();
@@ -370,6 +370,24 @@ console.log('\n11. input guards, geometry and device speed (bin/mutate survivors
 
   r = rig(); r.run(); r.fix(15);
   check('a 15 m fix is good enough at once', r.out.got?.coords.accuracy === 15);
+
+  // guideWatch: the walk back to the car. Same fake geo and clock.
+  const guide = (r, o) => {
+    const g = { fixes: [], ends: [] };
+    g.stop = guideWatch(r.geo, p => g.fixes.push(p.coords.accuracy), e => g.ends.push(e), { setT: r.setT, clearT: r.clearT, ...o });
+    return g;
+  };
+  r = rig(); let g = guide(r); r.fix(30); r.advance(60_000); r.fix(12); r.fix(8);
+  check('guide passes on every fix while you walk', g.fixes.join() === '30,12,8' && g.ends.length === 0 && r.geo.cleared === 0);
+  r.geo.bad({ code: 3, message: 'timeout' });
+  check('guide rides out a fix timeout', g.ends.length === 0 && r.geo.cleared === 0);
+  g.stop(); r.fix(5); g.stop();
+  check('guide stop clears the watch, ends once, ignores later fixes', r.geo.cleared === 1 && g.ends.length === 1 && g.ends[0] === null && g.fixes.length === 3 && r.pending() === 0);
+  r = rig(); g = guide(r); r.fix(20); r.advance(20 * 60_000);
+  check('guide gives up after 20 min to save the battery', r.geo.cleared === 1 && g.ends.length === 1 && g.ends[0] === null);
+  r = rig(); g = guide(r); r.geo.bad({ code: 1, message: 'denied' });
+  check('guide ends on permission denied and says why', r.geo.cleared === 1 && g.ends[0]?.code === 1 && r.pending() === 0);
+  check('guide asks for GPS precision', r.geo.opts.enableHighAccuracy === true);
   r = rig(); r.run(); r.fix(15.5); r.advance(4999);
   check('a 15.5 m fix waits, and the window is 5 s, not a ms more', r.out.got === null);
   r.advance(1);
@@ -750,6 +768,19 @@ console.log('\n12. thresholds stood on exactly, and the median (bin/mutate survi
     && ruleNow({ label: 'x', days: [1, 2, 3, 4, 5], from: 20, to: 26, holidays: true }, T('2026-11-26T09:00:00Z')).on === true);
   check('HOLIDAYS: 20 dates, all valid, all weekdays', HOLIDAYS.size === 20
     && [...HOLIDAYS.keys()].every(d => { const w = new Date(d + 'T12:00:00Z').getUTCDay(); return w >= 1 && w <= 5; }));
+}
+
+// The page: guiding must steer without feeding the detector (a walk back to the car pushed
+// into it could record a false park over the real one), and it starts on opening.
+{
+  const { readFileSync } = await import('node:fs');
+  const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
+  const body = html.match(/function startGuide\([^)]*\)\{([\s\S]*?)\n\}/)?.[1] ?? '';
+  check('page: startGuide sets the position and repaints', /here\s*=/.test(body) && /paint\(\)/.test(body));
+  check('page: startGuide never feeds the detector', body !== '' && !/det\./.test(body));
+  check('page: a saved spot starts guiding on open when location is allowed',
+    /permissions\.query\(\{name:'geolocation'\}\)[\s\S]{0,80}'granted'\) startGuide\(/.test(html));
+  check('page: the guide button exists and is wired', /id="btn-guide"/.test(html) && /\$\('btn-guide'\)\.onclick/.test(html));
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
