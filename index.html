@@ -258,10 +258,10 @@ a{color:var(--link)}
 </div>
 
 <script type="module">
-import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, guideWatch, screenKeeper, placeLabel, STATE } from './detector.js';
-import { LANDMARKS } from './landmarks.js';
-import { zoneAt, zoneLine, freeLots, holidayNote, moveBy, moveByICS } from './zone.js';
-import { MARKERS, LOTS } from './zones.js';
+import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, guideWatch, screenKeeper, placeLabel, STATE } from './detector.js?v=park-v7';
+import { LANDMARKS } from './landmarks.js?v=park-v7';
+import { zoneAt, zoneLine, freeLots, holidayNote, moveBy, moveByICS } from './zone.js?v=park-v7';
+import { MARKERS, LOTS } from './zones.js?v=park-v7';
 const awake = screenKeeper(navigator, document);
 // Apple Maps ships on every iPhone, iPad and Mac, so those get its walking route.
 const APPLE = /iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent);

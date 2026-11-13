@@ -4,13 +4,21 @@
  * files and the webfont. So it is cache-first across the board, which means it opens
  * instantly in a parking garage with no signal, which is exactly where it is needed.
  */
-const VERSION = 'park-v6';
-const SHELL = ['./', './index.html', './detector.js', './landmarks.js', './zone.js', './zones.js', './manifest.webmanifest',
+/* The page's module imports carry ?v=VERSION (index.html, zone.js; test.mjs holds them to
+ * it). Navigations are network-first, so a phone opens the NEW index.html while the OLD
+ * worker still answers for scripts from its cache; with bare './detector.js' that handed
+ * the new page the old module, and an import the old one lacked (guideWatch, 2026-11-12)
+ * killed the whole page on the first open after an update. A versioned URL is a cache
+ * miss for any older worker, so the page and its modules always arrive as one release. */
+const VERSION = 'park-v7';
+const MODS = ['./detector.js', './landmarks.js', './zone.js', './zones.js'].map(u => `${u}?v=${VERSION}`);
+const SHELL = ['./', './index.html', ...MODS, './manifest.webmanifest',
                './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION)
-    .then(c => Promise.all(SHELL.map(u => c.add(u).catch(() => {}))))
+    .then(c => Promise.all(SHELL.map(u =>   // past the HTTP cache: Pages allows 10 min
+      c.add(new Request(u, { cache: 'reload' })).catch(() => {}))))
     .then(() => self.skipWaiting()));
 });
 

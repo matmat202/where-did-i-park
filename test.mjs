@@ -783,5 +783,25 @@ console.log('\n12. thresholds stood on exactly, and the median (bin/mutate survi
   check('page: the guide button exists and is wired', /id="btn-guide"/.test(html) && /\$\('btn-guide'\)\.onclick/.test(html));
 }
 
+// One release at a time: every module import is pinned to the service worker's VERSION,
+// or an updated index.html is handed an old cached module and dies on its first open.
+{
+  const { readFileSync } = await import('node:fs');
+  const rd = f => readFileSync(new URL('./' + f, import.meta.url), 'utf8');
+  const sw = rd('sw.js'), ver = sw.match(/const VERSION = '([^']+)'/)?.[1];
+  const imports = ['index.html', 'zone.js', 'zones.js', 'landmarks.js', 'detector.js']
+    .flatMap(f => [...rd(f).matchAll(/from '(\.\/[^']+)'/g)].map(m => `${f}: ${m[1]}`));
+  const bare = imports.filter(i => !i.endsWith(`?v=${ver}'`.slice(0, -1)));
+  check('modules: every relative import carries ?v=<sw VERSION>', ver && imports.length >= 5 && bare.length === 0,
+    bare.join(', ') || `${imports.length} imports`);
+  check('modules: the worker precaches the versioned module URLs', /\.map\(u => `\$\{u\}\?v=\$\{VERSION\}`\)/.test(sw) && /\.\.\.MODS/.test(sw));
+  check('modules: install fetches past the HTTP cache', /cache: 'reload'/.test(sw));
+  // Nothing else here loads sw.js; a stray paren once left it unparseable, so no new
+  // worker ever installed and phones kept the old release's cache.
+  const { Script } = await import('node:vm');
+  let swErr = ''; try { new Script(sw, { filename: 'sw.js' }); } catch (e) { swErr = e.message; }
+  check('sw.js parses', swErr === '', swErr);
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
