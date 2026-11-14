@@ -107,6 +107,21 @@ export function walkLink(p, apple) {
 }
 
 /**
+ * Close enough that the distance is noise: "6 m away, NE" with a spinning arrow sends you
+ * in circles when both fixes are good to +-10 m. The circle is the two fixes' accuracies
+ * combined (hypot), floored at `minM` and capped at `maxM` so a coarse Wi-Fi fix cannot
+ * claim "in sight" from a street away. Returns that radius in metres when you are inside
+ * it, else null. Pass `wasNear` to leave only past 1.3x the radius, so standing on the
+ * edge does not flicker between the two states.
+ */
+export function nearby(here, p, { minM = 15, maxM = 50, wasNear = false } = {}) {
+  if (!here || !p) return null;
+  const acc = Math.hypot(+here.accuracy || 0, +p.accuracy || 0);
+  const r = Math.min(maxM, Math.max(minM, acc));
+  return haversine(here, p) <= (wasNear ? r * 1.3 : r) ? Math.round(r) : null;
+}
+
+/**
  * A name for where the spot is: "40 m SE of Y2E2". A pin and a compass get you back to
  * the right rack field, but at Stanford the rack fields are huge and look alike, and a
  * building is what you remember. `list` is [[lat, lon, name], ...] (landmarks.js, bundled,

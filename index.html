@@ -67,6 +67,8 @@ h1 em{font-style:normal;color:var(--accent)}
 .reading{min-width:0;flex:1}
 .dist{font-family:var(--f-mono);font-weight:600;font-size:clamp(30px,8vw,46px);
   line-height:1;letter-spacing:-.025em;font-variant-numeric:tabular-nums}
+.dist.near{font-family:var(--f-sign);font-size:clamp(24px,6.4vw,34px);letter-spacing:0;line-height:1.1}
+.dist.near small{display:block;margin:4px 0 0;font-size:.5em}
 .dist small{font-size:.4em;font-weight:500;color:var(--muted);margin-left:5px;letter-spacing:0}
 .compass{font-family:var(--f-sign);text-transform:uppercase;letter-spacing:.07em;
   font-size:14px;color:var(--accent);margin-top:5px}
@@ -258,10 +260,10 @@ a{color:var(--link)}
 </div>
 
 <script type="module">
-import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, guideWatch, screenKeeper, placeLabel, STATE } from './detector.js?v=park-v7';
-import { LANDMARKS } from './landmarks.js?v=park-v7';
-import { zoneAt, zoneLine, freeLots, holidayNote, moveBy, moveByICS } from './zone.js?v=park-v7';
-import { MARKERS, LOTS } from './zones.js?v=park-v7';
+import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, guideWatch, screenKeeper, placeLabel, nearby, STATE } from './detector.js?v=park-v8';
+import { LANDMARKS } from './landmarks.js?v=park-v8';
+import { zoneAt, zoneLine, freeLots, holidayNote, moveBy, moveByICS } from './zone.js?v=park-v8';
+import { MARKERS, LOTS } from './zones.js?v=park-v8';
 const awake = screenKeeper(navigator, document);
 // Apple Maps ships on every iPhone, iPad and Mac, so those get its walking route.
 const APPLE = /iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent);
@@ -271,7 +273,7 @@ const $ = id => document.getElementById(id);
 const CARDINALS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
 const cardinal = d => CARDINALS[Math.round(d / 22.5) % 16];
 
-let watchId = null, heading = null, here = null, demoTimer = null;
+let watchId = null, heading = null, here = null, demoTimer = null, near = null;
 let needleDeg = null;   // unwrapped, so the transition never spins the long way
 const log = [];
 
@@ -308,6 +310,7 @@ function paint(){
   const a = $('answer');
   if (!p){
     a.classList.add('none');
+    near = null; $('dist').classList.remove('near');
     $('dist').textContent = 'Not recorded yet';
     $('compass').textContent = '';
     $('sincewhen').textContent = 'Start tracking before you drive, or mark the spot by hand.';
@@ -321,7 +324,14 @@ function paint(){
   $('needle').style.opacity = '1';
   const label = p.mode === 'bike' ? 'bike' : 'car';
 
-  if (here){
+  near = here ? nearby(here, p, { wasNear: near != null }) : null;
+  $('dist').classList.toggle('near', near != null);
+  if (near != null){
+    // Inside GPS noise the number and the arrow only send you in circles: say look up.
+    $('dist').innerHTML = `It should be in sight<small>within ~${near} m</small>`;
+    $('compass').textContent = `GPS can't narrow it further — look for your ${label}`;
+    $('needle').style.opacity = '.22';
+  } else if (here){
     const d = Math.round(haversine(here, p));
     const b = bearing(here, p);
     $('dist').innerHTML = d >= 1000
@@ -412,7 +422,7 @@ function banner(text){ const b = $('banner'); b.textContent = text; b.hidden = f
 /* ---------- geolocation ---------- */
 function onFix(pos){
   const c = pos.coords;
-  here = {lat:c.latitude, lon:c.longitude};
+  here = {lat:c.latitude, lon:c.longitude, accuracy:c.accuracy};
   det.push({lat:c.latitude, lon:c.longitude, t:pos.timestamp,
             accuracy:c.accuracy, speed:c.speed ?? undefined});
   $('g-fixes').textContent = String(det.fixes.length + det.rejected);
@@ -468,7 +478,7 @@ function startGuide(fromTap){
   if (guideStop || watchId != null || !navigator.geolocation) return;
   if (fromTap) requestHeading();
   guideStop = guideWatch(navigator.geolocation, pos => {
-    here = {lat:pos.coords.latitude, lon:pos.coords.longitude};
+    here = {lat:pos.coords.latitude, lon:pos.coords.longitude, accuracy:pos.coords.accuracy};
     paint();
   }, err => {
     guideStop = null;

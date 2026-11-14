@@ -4,7 +4,7 @@
  * Each trace is a scripted walk/drive. The point is the negative cases: a detector
  * that fires on a red light is worse than useless, because you would trust it.
  */
-import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, guideWatch, screenKeeper, placeLabel, DEFAULTS } from './detector.js';
+import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, guideWatch, screenKeeper, placeLabel, nearby, DEFAULTS } from './detector.js';
 import { LANDMARKS } from './landmarks.js';
 import { zoneAt, zoneLine, ruleNow, stanfordClock, RULES, SHARED, hoursFree, freeLots, holidayNote, HOLIDAYS, moveBy, moveByICS } from './zone.js';
 import { MARKERS, LOTS } from './zones.js';
@@ -501,6 +501,27 @@ console.log('\n12. thresholds stood on exactly, and the median (bin/mutate survi
   const doc = { visibilityState: 'visible', n: 0, addEventListener() { this.n++; } };
   const k = screenKeeper({}, doc); k.hold(); k.release();
   check('no wakeLock API: hold/release are no-ops and add no listener', doc.n === 0 && !k.held);
+}
+
+// --- nearby: inside GPS noise the page says "it should be in sight" ----------------------
+{
+  const car = { lat: 37.4300, lon: -122.1700, accuracy: 5 };
+  const at = (m, acc) => ({ ...offset(car, m, 90), accuracy: acc });
+  check('nearby: 10 m off with good fixes is in sight, radius floored at 15', nearby(at(10, 5), car) === 15);
+  check('nearby: 20 m off with good fixes is not (the floor is a floor, not a guess)', nearby(at(20, 5), car) === null);
+  check('nearby: a +-30 m fix widens the circle to hypot(30, 5)', nearby(at(28, 30), car) === 30 && nearby(at(32, 30), car) === null);
+  check('nearby: a +-200 m Wi-Fi fix cannot claim in sight past 50 m', nearby(at(60, 200), car) === null && nearby(at(45, 200), car) === 50);
+  check('nearby: no accuracy anywhere still floors at 15', nearby(offset(car, 12, 0), { lat: car.lat, lon: car.lon }) === 15);
+  check('nearby: leaving needs 1.3x the radius once in sight (no flicker on the edge)',
+    nearby(at(18, 5), car, { wasNear: true }) === 15 && nearby(at(18, 5), car) === null && nearby(at(20, 5), car, { wasNear: true }) === null);
+  check('nearby: no position or no spot -> null', nearby(null, car) === null && nearby(at(1, 5), null) === null);
+  const { readFileSync } = await import('node:fs');
+  const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
+  const paintBody = html.match(/function paint\(\)\{([\s\S]*?)\n\}/)?.[1] ?? '';
+  check('page: paint() asks nearby() with hysteresis and says "in sight"',
+    /nearby\(here, p, \{ wasNear: near != null \}\)/.test(paintBody) && /It should be in sight/.test(paintBody));
+  check('page: both position sources keep the fix accuracy nearby() needs',
+    (html.match(/here = \{lat:[^}]*accuracy:[^}]*\}/g) || []).length === 2);
 }
 
 // --- placeLabel: a building name for the saved spot ---------------------------------
