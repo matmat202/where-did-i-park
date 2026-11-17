@@ -10,7 +10,7 @@
  * the new page the old module, and an import the old one lacked (guideWatch, 2026-11-12)
  * killed the whole page on the first open after an update. A versioned URL is a cache
  * miss for any older worker, so the page and its modules always arrive as one release. */
-const VERSION = 'park-v8';
+const VERSION = 'park-v9';
 const MODS = ['./detector.js', './landmarks.js', './zone.js', './zones.js'].map(u => `${u}?v=${VERSION}`);
 const SHELL = ['./', './index.html', ...MODS, './manifest.webmanifest',
                './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'];

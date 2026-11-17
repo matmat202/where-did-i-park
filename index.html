@@ -265,10 +265,10 @@ a{color:var(--link)}
 </div>
 
 <script type="module">
-import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, guideWatch, screenKeeper, placeLabel, nearby, STATE } from './detector.js?v=park-v8';
-import { LANDMARKS } from './landmarks.js?v=park-v8';
-import { zoneAt, zoneLine, freeLots, holidayNote, moveBy, moveByICS } from './zone.js?v=park-v8';
-import { MARKERS, LOTS } from './zones.js?v=park-v8';
+import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, guideWatch, screenKeeper, placeLabel, nearby, fixTime, STATE } from './detector.js?v=park-v9';
+import { LANDMARKS } from './landmarks.js?v=park-v9';
+import { zoneAt, zoneLine, freeLots, holidayNote, moveBy, moveByICS } from './zone.js?v=park-v9';
+import { MARKERS, LOTS } from './zones.js?v=park-v9';
 const awake = screenKeeper(navigator, document);
 // Apple Maps ships on every iPhone, iPad and Mac, so those get its walking route.
 const APPLE = /iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent);
@@ -428,7 +428,7 @@ function banner(text){ const b = $('banner'); b.textContent = text; b.hidden = f
 function onFix(pos){
   const c = pos.coords;
   here = {lat:c.latitude, lon:c.longitude, accuracy:c.accuracy};
-  det.push({lat:c.latitude, lon:c.longitude, t:pos.timestamp,
+  det.push({lat:c.latitude, lon:c.longitude, t:fixTime(pos),
             accuracy:c.accuracy, speed:c.speed ?? undefined});
   $('g-fixes').textContent = String(det.fixes.length + det.rejected);
   const acc = $('g-acc');
@@ -536,11 +536,13 @@ $('btn-mark').onclick = () => {
   banner('Getting a precise fix…');
   sampleBestFix(navigator.geolocation, pos => {
     marking = false;
-    const c = pos.coords;
-    save({lat:c.latitude, lon:c.longitude, accuracy:c.accuracy, atMs:pos.timestamp,
-          mode:'car', confirmedAtMs:pos.timestamp, walkedAwayM:null});
-    here = {lat:c.latitude, lon:c.longitude};
-    addLog('park', `Marked by hand (±${Math.round(c.accuracy)} m)`, pos.timestamp);
+    const c = pos.coords, t = fixTime(pos);
+    // You are standing at it: set here first, so the first paint says "in sight", not
+    // "waiting for your position".
+    here = {lat:c.latitude, lon:c.longitude, accuracy:c.accuracy};
+    save({lat:c.latitude, lon:c.longitude, accuracy:c.accuracy, atMs:t,
+          mode:'car', confirmedAtMs:t, walkedAwayM:null});
+    addLog('park', `Marked by hand (±${Math.round(c.accuracy)} m)`, t);
     banner('Spot saved from your current position.');
   }, err => { marking = false; onGeoError(err); });
 };
@@ -593,7 +595,7 @@ $('btn-free').onclick = () => {
   banner('Finding where you are…');
   navigator.geolocation.getCurrentPosition(pos => {
     finding = false;
-    here = {lat:pos.coords.latitude, lon:pos.coords.longitude};
+    here = {lat:pos.coords.latitude, lon:pos.coords.longitude, accuracy:pos.coords.accuracy};
     $('banner').hidden = true;
     paintFree(here);
   }, err => { finding = false; onGeoError(err); }, {enableHighAccuracy:false, timeout:15000, maximumAge:60000});
@@ -626,7 +628,7 @@ $('btn-demo').onclick = () => {
       }
       t += 1000;
       det.push({lat:pos.lat, lon:pos.lon, t, accuracy:8, speed:sp});
-      here = {lat:pos.lat, lon:pos.lon};
+      here = {lat:pos.lat, lon:pos.lon, accuracy:8};
       if (++i >= secs){ i = 0; li++; break; }
     }
     $('g-fixes').textContent = String(det.fixes.length + det.rejected);

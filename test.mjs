@@ -4,7 +4,7 @@
  * Each trace is a scripted walk/drive. The point is the negative cases: a detector
  * that fires on a red light is worse than useless, because you would trust it.
  */
-import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, guideWatch, screenKeeper, placeLabel, nearby, DEFAULTS } from './detector.js';
+import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, guideWatch, screenKeeper, placeLabel, nearby, fixTime, DEFAULTS } from './detector.js';
 import { LANDMARKS } from './landmarks.js';
 import { zoneAt, zoneLine, ruleNow, stanfordClock, RULES, SHARED, hoursFree, freeLots, holidayNote, HOLIDAYS, moveBy, moveByICS } from './zone.js';
 import { MARKERS, LOTS } from './zones.js';
@@ -520,8 +520,11 @@ console.log('\n12. thresholds stood on exactly, and the median (bin/mutate survi
   const paintBody = html.match(/function paint\(\)\{([\s\S]*?)\n\}/)?.[1] ?? '';
   check('page: paint() asks nearby() with hysteresis and says "in sight"',
     /nearby\(here, p, \{ wasNear: near != null \}\)/.test(paintBody) && /It should be in sight/.test(paintBody));
-  check('page: both position sources keep the fix accuracy nearby() needs',
-    (html.match(/here = \{lat:[^}]*accuracy:[^}]*\}/g) || []).length === 2);
+  // Tracking, guiding, mark by hand, lots near me and the demo. A coarse lots-near-me fix
+  // without its accuracy read as exact and could say "in sight" from 15 m (2026-11-17).
+  const heres = html.match(/here = \{lat:[^}]*\}/g) || [];
+  check('page: every position source keeps the fix accuracy nearby() needs',
+    heres.length === 5 && heres.every(h => /accuracy:/.test(h)), heres.join(' | '));
 }
 
 // --- placeLabel: a building name for the saved spot ---------------------------------
@@ -822,6 +825,26 @@ console.log('\n12. thresholds stood on exactly, and the median (bin/mutate survi
   const { Script } = await import('node:vm');
   let swErr = ''; try { new Script(sw, { filename: 'sw.js' }); } catch (e) { swErr = e.message; }
   check('sw.js parses', swErr === '', swErr);
+}
+
+console.log('\n13. fix timestamps the clock disagrees with (WebKit microseconds, 2026-11-17)');
+{
+  const now = 1_794_936_389_427;
+  check('a sane stamp is kept (the fix time, not the arrival time)', fixTime({ timestamp: now - 1200 }, now) === now - 1200);
+  check('a microsecond stamp falls back to the clock', fixTime({ timestamp: 1_794_936_388_419_000 }, now) === now);
+  check('a stamp in seconds falls back to the clock', fixTime({ timestamp: 1_794_936_388 }, now) === now);
+  check('missing / NaN stamps fall back to the clock', fixTime({}, now) === now && fixTime({ timestamp: NaN }, now) === now && fixTime(null, now) === now);
+  check('5 min of skew is tolerated, a ms more is not',
+    fixTime({ timestamp: now - 300_000 }, now) === now - 300_000 && fixTime({ timestamp: now + 300_001 }, now) === now);
+  // The whole trip of test 1 with every stamp in microseconds, as WebKit sends it: through
+  // fixTime the park is still found; with raw stamps each 1 s step reads as a 16 min hole.
+  const f = trace([{ speed: 13, seconds: 300, bearing: 90 }, { speed: 0, seconds: 30 }, { speed: 1.4, seconds: 120, bearing: 0 }]);
+  const via = g => run(f.map(p => ({ ...p, t: g({ timestamp: p.t * 1000 }, p.t) }))).parks.length;
+  check('a microsecond-stamped trip is still detected through fixTime', via(fixTime) === 1, `got ${via(fixTime)}`);
+  check('... and raw microsecond stamps would have missed it (the control)', via(pos => pos.timestamp) === 0);
+  // The page must use it everywhere it reads a fix time.
+  const html = (await import('node:fs')).readFileSync(new URL('./index.html', import.meta.url), 'utf8');
+  check('index.html never reads pos.timestamp directly', !/\bpos\.timestamp\b/.test(html) && (html.match(/fixTime\(pos\)/g) || []).length >= 2);
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

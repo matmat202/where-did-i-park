@@ -122,6 +122,19 @@ export function nearby(here, p, { minM = 15, maxM = 50, wasNear = false } = {}) 
 }
 
 /**
+ * When a fix was taken, in epoch ms. The spec says pos.timestamp is that, but WebKit under
+ * Playwright hands back microseconds (1794936388419000 against Date.now() 1794936389427,
+ * measured 2026-11-17), and a device can stamp fixes with a GNSS clock that disagrees with
+ * its own. Trusted blindly, a hand-marked spot read "parked Wed 10:27 PM" on a Tuesday
+ * morning, and the detector's 25 s / 75 s / 15 min windows were 1000x off. A stamp more than
+ * `maxSkewMs` from the clock is not a time this page can use, so the arrival time stands in.
+ */
+export function fixTime(pos, now = Date.now(), { maxSkewMs = 5 * 60_000 } = {}) {
+  const t = +pos?.timestamp;
+  return Number.isFinite(t) && Math.abs(t - now) <= maxSkewMs ? t : now;
+}
+
+/**
  * A name for where the spot is: "40 m SE of Y2E2". A pin and a compass get you back to
  * the right rack field, but at Stanford the rack fields are huge and look alike, and a
  * building is what you remember. `list` is [[lat, lon, name], ...] (landmarks.js, bundled,
