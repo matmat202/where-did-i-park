@@ -388,6 +388,8 @@ console.log('\n11. input guards, geometry and device speed (bin/mutate survivors
   r = rig(); g = guide(r); r.geo.bad({ code: 1, message: 'denied' });
   check('guide ends on permission denied and says why', r.geo.cleared === 1 && g.ends[0]?.code === 1 && r.pending() === 0);
   check('guide asks for GPS precision', r.geo.opts.enableHighAccuracy === true);
+  // the staleness bound was never asserted, only the precision flag beside it
+  check('guide will take a fix up to 5 s old, and no older', r.geo.opts.maximumAge === 5000, JSON.stringify(r.geo.opts));
   r = rig(); r.run(); r.fix(15.5); r.advance(4999);
   check('a 15.5 m fix waits, and the window is 5 s, not a ms more', r.out.got === null);
   r.advance(1);
@@ -515,6 +517,17 @@ console.log('\n12. thresholds stood on exactly, and the median (bin/mutate survi
   check('nearby: leaving needs 1.3x the radius once in sight (no flicker on the edge)',
     nearby(at(18, 5), car, { wasNear: true }) === 15 && nearby(at(18, 5), car) === null && nearby(at(20, 5), car, { wasNear: true }) === null);
   check('nearby: no position or no spot -> null', nearby(null, car) === null && nearby(at(1, 5), null) === null);
+  // A missing accuracy field reads as 0, not 1: the suite's own "no accuracy anywhere" case
+  // floors at 15 either way, so the || 0 default was never pinned. 15.47 is the smallest
+  // accuracy where hypot(0, a) and hypot(1, a) round to different metres.
+  const same = { lat: car.lat, lon: car.lon };
+  check('nearby: a fix with no accuracy counts as 0, not 1',
+    nearby(same, { ...same, accuracy: 15.47 }) === 15 && nearby({ ...same, accuracy: 15.47 }, same) === 15);
+  // standing exactly ON the radius. Every other case is strictly inside or strictly outside,
+  // so "<=" and "<" were never separated; with minM 0 and a perfect fix the radius is 0 and
+  // the distance to the spot you are standing on is 0, which is the only exact tie available.
+  check('nearby: exactly on the radius is inside it, not outside',
+    nearby(same, same, { minM: 0 }) === 0 && nearby(same, same, { minM: 0, wasNear: true }) === 0);
   const { readFileSync } = await import('node:fs');
   const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
   const paintBody = html.match(/function paint\(\)\{([\s\S]*?)\n\}/)?.[1] ?? '';
