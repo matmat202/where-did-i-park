@@ -899,5 +899,39 @@ console.log('\n14. a stop still waiting on the walk-away rule can be kept (settl
     /id="pending"/.test(html) && /\$\('btn-settle'\)\.onclick = \(\) => \{ if \(det\.settle\(/.test(html) && /function paint\(\)\{\n  paintPending\(\);/.test(html));
 }
 
+console.log('\n15. a falsy-but-real accuracy survives, and the drive state is cleared (2026-11-21)');
+{
+  // `accuracy ?? null` and `accuracy || null` differ on exactly one input: 0. Section 14
+  // tested 10 and undefined, so both spellings passed, and the mutation sat ACCEPTED as a
+  // "measured equivalent" on BOTH lines that carry it. It is not equivalent: index.html's
+  // `p.accuracy != null ? ±… : null` renders 0 as "±0 m fix" and null as nothing.
+  const z = (ps) => ps.map((p) => ({ ...p, accuracy: 0 }));
+  const f = z(trace([{ speed: 13, seconds: 120, bearing: 90 }, { speed: 0, seconds: 20 }, { speed: 1.25, seconds: 8, bearing: 0 }]));
+  const { d } = run(f);
+  check('setup: the open candidate carries an accuracy of 0', d.candidate && d.candidate.fix.accuracy === 0);
+  check('settle keeps an accuracy of 0 instead of losing it to null', d.settle(f.at(-1).t + 1).accuracy === 0);
+  // The same expression one method up, on the path where the walk-away rule confirms by itself.
+  // The walk is slow on purpose: the clear happens AFTER the park event and the walking fixes
+  // raise the peak again straight away, so a 1.3 m/s walk hides `0 -> 1` behind Math.max.
+  const g = z(trace([{ speed: 13, seconds: 120, bearing: 90 }, { speed: 0, seconds: 20 }, { speed: 0.5, seconds: 90, bearing: 0 }]));
+  let peakAtPark = null;
+  const r = run(g);
+  check('setup: the walk-away rule confirmed a park on its own', r.parks.length === 1);
+  check('a confirmed park keeps an accuracy of 0 too', r.d.parked.accuracy === 0);
+  // peakSpeed is set to 0 in three places and nothing asserted it, so `0 -> 1` survived at
+  // all three. It is what decides the car/bike verdict of the NEXT stop.
+  check('a fresh detector has no peak speed', new ParkingDetector().peakSpeed === 0);
+  check('reset clears the peak speed of the drive before it', (() => {
+    const x = new ParkingDetector(); for (const p of f) x.push(p); x.reset(); return x.peakSpeed === 0; })());
+  {
+    const x = new ParkingDetector({}, (e) => { if (e.type === 'park' && peakAtPark === null) peakAtPark = x.peakSpeed; });
+    for (const q of g) x.push(q);
+    check('setup: the drive peak reached the park verdict', peakAtPark > 12, String(peakAtPark));
+    check('a confirmed park drops the drive peak, so the next stop is judged on its own drive',
+      x.peakSpeed < 1 && x.peakSpeed > 0, String(x.peakSpeed));
+  }
+  check('settle clears the peak speed too', d.peakSpeed === 0);
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
