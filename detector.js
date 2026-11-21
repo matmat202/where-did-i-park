@@ -393,6 +393,32 @@ export class ParkingDetector {
     }
   }
 
+  /** Keep the stop that is still waiting on the walk-away rule: the person tapped "save
+   *  it now", or stopped tracking. Without this an open candidate died with the watch,
+   *  and the page went on showing the spot from before the drive. Null if none is open. */
+  settle(t) {
+    const c = this.candidate;
+    if (!c) return null;
+    const last = this.fixes[this.fixes.length - 1];
+    this.parked = {
+      lat: c.fix.lat,
+      lon: c.fix.lon,
+      accuracy: c.fix.accuracy ?? null,
+      atMs: c.atMs,
+      mode: c.mode,
+      confirmedAtMs: t,
+      walkedAwayM: null,
+      settledAwayM: last ? Math.round(haversine(c.fix, last)) : 0,
+    };
+    // Cleared before the event, so a listener repainting from it sees no open stop.
+    this.candidate = null;
+    this.movingSinceMs = null;
+    this.lastVehicularFix = null;
+    this.peakSpeed = 0;
+    this.onEvent({ type: 'park', at: this.parked, t, settled: true });
+    return this.parked;
+  }
+
   /** Where is it, and which way do I walk? */
   guidance(from) {
     if (!this.parked || !from) return null;

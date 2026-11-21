@@ -16,7 +16,7 @@
  * in the shared ones, so this file does not promise them.
  * Times are Stanford's (America/Los_Angeles) whatever zone the phone is in.
  */
-import { haversine } from './detector.js?v=park-v9';   // ?v= must match sw.js VERSION: see sw.js
+import { haversine } from './detector.js?v=park-v10';   // ?v= must match sw.js VERSION: see sw.js
 
 /** Stanford university holidays (Stanford dates), and the winter closure around them. */
 export const HOLIDAYS = new Map([

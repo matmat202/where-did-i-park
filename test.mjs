@@ -860,5 +860,44 @@ console.log('\n13. fix timestamps the clock disagrees with (WebKit microseconds,
   check('index.html never reads pos.timestamp directly', !/\bpos\.timestamp\b/.test(html) && (html.match(/fixTime\(pos\)/g) || []).length >= 2);
 }
 
+console.log('\n14. a stop still waiting on the walk-away rule can be kept (settle, 2026-11-20)');
+{
+  // Drive, stop, 10 m on foot: a candidate is open but not confirmed (needs 25 m and 75 s).
+  const f = trace([{ speed: 13, seconds: 120, bearing: 90 }, { speed: 0, seconds: 20 }, { speed: 1.25, seconds: 8, bearing: 0 }]);
+  const { d, events, parks } = run(f);
+  const stop = d.candidate?.fix;
+  check('setup: candidate open, nothing confirmed', stop && parks.length === 0);
+  const got = d.settle(f.at(-1).t + 500);
+  const ev = events.at(-1);
+  check('settle saves the stop point, not where you stand',
+    got && got.lat === stop.lat && got.lon === stop.lon && haversine(got, f.at(-1)) > 5);
+  check('settle keeps time, mode and accuracy of the stop', got.atMs === stop.t && got.mode === 'car' && got.accuracy === 10 && got.confirmedAtMs === f.at(-1).t + 500);
+  check('settle marks itself: walkedAwayM null, settledAwayM is the distance so far',
+    got.walkedAwayM === null && got.settledAwayM === Math.round(haversine(stop, f.at(-1))) && got.settledAwayM >= 9);
+  {
+    const x = new ParkingDetector({}, e => { if (e.type === 'park') seen = x.candidate; });
+    let seen = 'unset'; for (const p of f) x.push(p); x.settle(f.at(-1).t + 1);
+    check('settle has closed the candidate by the time its park event is heard', seen === null, String(seen));
+  }
+  check('settle emits one park event flagged settled', ev.type === 'park' && ev.settled === true && ev.at === got && events.filter(e => e.type === 'park').length === 1);
+  check('settle closes the candidate and becomes the parked spot', d.candidate === null && d.parked === got);
+  check('a second settle finds nothing to keep', d.settle(f.at(-1).t + 900) === null);
+  // Settling clears the drive, so the rest of the walk cannot confirm the same stop again.
+  for (const p of trace([{ speed: 1.4, seconds: 120, bearing: 0 }]).map(p => ({ ...p, t: p.t + 200_000 }))) d.push(p);
+  check('... and walking on does not record that stop a second time', events.filter(e => e.type === 'park').length === 1);
+  const fresh = new ParkingDetector({}, () => {});
+  check('settle with no candidate is null and leaves parked alone', fresh.settle(1) === null && fresh.parked === null);
+  check('settle on a fresh-stopped detector with no fixes still works', (() => {
+    const x = new ParkingDetector({}, () => {}); x.candidate = { fix: { lat: 1, lon: 2, t: 5 }, atMs: 5, mode: 'bike' };
+    const r = x.settle(9); return r.settledAwayM === 0 && r.accuracy === null && r.mode === 'bike'; })());
+  // The page: Stop tracking keeps an open stop, and the card shows it while it waits.
+  const html = (await import('node:fs')).readFileSync(new URL('./index.html', import.meta.url), 'utf8');
+  const stopBody = html.match(/function stopTracking\(\)\{([\s\S]*?)\n\}/)?.[1] ?? '';
+  check('page: stopTracking settles an open stop before the watch is dropped',
+    /det\.settle\(/.test(stopBody) && stopBody.indexOf('det.settle(') < stopBody.indexOf('watchId = null'));
+  check('page: the pending box, its save button, and paint() repaints it',
+    /id="pending"/.test(html) && /\$\('btn-settle'\)\.onclick = \(\) => \{ if \(det\.settle\(/.test(html) && /function paint\(\)\{\n  paintPending\(\);/.test(html));
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

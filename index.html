@@ -72,6 +72,8 @@ h1 em{font-style:normal;color:var(--accent)}
 .dist small{font-size:.4em;font-weight:500;color:var(--muted);margin-left:5px;letter-spacing:0}
 .compass{font-family:var(--f-sign);text-transform:uppercase;letter-spacing:.07em;
   font-size:14px;color:var(--accent);margin-top:5px}
+.pending{margin:0 16px 12px;padding:10px 12px;background:var(--accent-soft);border-left:3px solid var(--accent);border-radius:var(--r);font-size:13.5px;color:var(--ink)}
+.pending button{margin-top:8px}
 .sincewhen{color:var(--muted);font-size:12.5px;margin-top:7px;font-variant-numeric:tabular-nums}
 .answer .guide{padding:0 18px 14px}
 .answer .guide:has(> [hidden]){display:none}
@@ -195,6 +197,8 @@ a{color:var(--link)}
         <div class="sincewhen" id="sincewhen">Start tracking before you drive, or mark the spot by hand.</div>
       </div>
     </div>
+    <div class="pending" id="pending" role="status" hidden><span id="pending-msg"></span><br>
+      <button class="primary" id="btn-settle" type="button">Save it now</button></div>
     <div class="guide"><button class="primary" id="btn-guide" type="button" hidden>Guide me to it</button></div>
     <div class="strip" id="strip"><span>No parking event stored.</span></div>
   </section>
@@ -265,10 +269,10 @@ a{color:var(--link)}
 </div>
 
 <script type="module">
-import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, guideWatch, screenKeeper, placeLabel, nearby, fixTime, STATE } from './detector.js?v=park-v9';
-import { LANDMARKS } from './landmarks.js?v=park-v9';
-import { zoneAt, zoneLine, freeLots, holidayNote, moveBy, moveByICS } from './zone.js?v=park-v9';
-import { MARKERS, LOTS } from './zones.js?v=park-v9';
+import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, guideWatch, screenKeeper, placeLabel, nearby, fixTime, STATE } from './detector.js?v=park-v10';
+import { LANDMARKS } from './landmarks.js?v=park-v10';
+import { zoneAt, zoneLine, freeLots, holidayNote, moveBy, moveByICS } from './zone.js?v=park-v10';
+import { MARKERS, LOTS } from './zones.js?v=park-v10';
 const awake = screenKeeper(navigator, document);
 // Apple Maps ships on every iPhone, iPad and Mac, so those get its walking route.
 const APPLE = /iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent);
@@ -286,14 +290,30 @@ const det = new ParkingDetector({}, ev => {
   if (ev.type === 'state') { paintState(ev.state, ev.speed); return; }
   if (ev.type === 'park') {
     save(ev.at);
-    addLog('park', `${ev.at.mode === 'bike' ? 'Bike' : 'Car'} parked — you walked ${ev.at.walkedAwayM} m away`, ev.t);
+    addLog('park', ev.settled ? `${ev.at.mode === 'bike' ? 'Bike' : 'Car'} stop saved by you, ${ev.at.settledAwayM} m from it`
+      : `${ev.at.mode === 'bike' ? 'Bike' : 'Car'} parked — you walked ${ev.at.walkedAwayM} m away`, ev.t);
     banner(`Recorded your ${ev.at.mode} at ${new Date(ev.at.atMs).toLocaleTimeString('en-US')}.`);
   } else if (ev.type === 'candidate') {
     addLog('candidate', `Possible stop (${ev.at.mode}) — waiting to see if you walk away`, ev.t);
   } else if (ev.type === 'cancel') {
     addLog('cancel', `Discarded: ${ev.reason}`, ev.t);
   }
+  paintPending();
 });
+
+/* A stop waiting on the walk-away rule is invisible on the card, which goes on reading
+   "Not recorded yet" or the spot from before the drive; and stopping tracking used to
+   throw it away. Say it is pending, and let a tap keep it (probe, 2026-11-20). */
+function paintPending(){
+  const c = det.candidate, box = $('pending');
+  box.hidden = !c;
+  if (!c) return;
+  const last = det.fixes[det.fixes.length - 1];
+  const away = last ? Math.round(haversine(c.fix, last)) : 0;
+  const at = new Date(c.atMs).toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'});
+  $('pending-msg').textContent = `Your ${c.mode} stopped at ${at}. It saves itself once you walk `
+    + `${det.o.walkAwayM} m away (${away} m so far) — keep this page open, or save it now.`;
+}
 
 /* ---------- storage ---------- */
 function save(p){ try { localStorage.setItem(KEY, JSON.stringify(p)); } catch {} paint(); }
@@ -310,6 +330,7 @@ function ago(ms){
 }
 
 function paint(){
+  paintPending();
   const p = load();
   paintGuide(p);
   const a = $('answer');
@@ -364,7 +385,8 @@ function paint(){
     zoneLine(zone),
     `${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`,
     p.accuracy != null ? `±${Math.round(p.accuracy)} m fix` : null,
-    p.walkedAwayM != null ? `confirmed after ${p.walkedAwayM} m on foot` : 'marked by hand',
+    p.walkedAwayM != null ? `confirmed after ${p.walkedAwayM} m on foot`
+      : p.settledAwayM != null ? 'saved by you where the drive stopped' : 'marked by hand',
     heading != null ? 'arrow follows your phone' : 'arrow is north-up',
   ].filter(Boolean);
   // paint() runs every 30 s; rebuilding an unchanged strip removed the walk link from
@@ -462,6 +484,7 @@ function startTracking(){
 
 function stopTracking(){
   if (watchId != null) navigator.geolocation.clearWatch(watchId);
+  if (watchId != null && det.candidate) det.settle(Date.now());
   watchId = null;
   awake.release();
   $('btn-track').textContent = 'Start tracking';
@@ -525,6 +548,7 @@ function requestHeading(){
 
 /* ---------- actions ---------- */
 $('btn-track').onclick = () => (watchId == null ? startTracking() : stopTracking());
+$('btn-settle').onclick = () => { if (det.settle(Date.now())) banner('Saved where your drive stopped.'); };
 $('btn-guide').onclick = () => (guideStop ? stopGuide() : startGuide(true));
 
 let marking = false;
