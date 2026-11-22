@@ -198,7 +198,8 @@ a{color:var(--link)}
       </div>
     </div>
     <div class="pending" id="pending" role="status" hidden><span id="pending-msg"></span><br>
-      <button class="primary" id="btn-settle" type="button">Save it now</button></div>
+      <button class="primary" id="btn-settle" type="button">Save it now</button>
+      <button id="btn-dismiss" type="button" hidden>Not where I parked</button></div>
     <div class="guide"><button class="primary" id="btn-guide" type="button" hidden>Guide me to it</button></div>
     <div class="strip" id="strip"><span>No parking event stored.</span></div>
   </section>
@@ -253,7 +254,10 @@ a{color:var(--link)}
          lights and stop-and-go traffic. Sitting in the car for twenty minutes does
          <em>not</em> cancel it — the car is still where you stopped. What does cancel it
          is a <b>gap in the data</b> over <code>15 min</code>: if fixes stop arriving we
-         cannot promise the car did not move, so we admit that instead of guessing.</p>
+         cannot promise the car did not move, so we admit that instead of guessing: the
+         stop is offered to you to keep or dismiss, never saved on its own. Locking the
+         screen stops a web page's location, so this is what happens if you lock it before
+         walking 25 m away.</p>
       <p>Fixes with accuracy worse than <code>60 m</code> are thrown away, and speed is
          median-smoothed over 5 samples so one GPS spike cannot fake a journey.</p>
     </div>
@@ -269,10 +273,10 @@ a{color:var(--link)}
 </div>
 
 <script type="module">
-import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, guideWatch, screenKeeper, placeLabel, nearby, fixTime, STATE } from './detector.js?v=park-v10';
-import { LANDMARKS } from './landmarks.js?v=park-v10';
-import { zoneAt, zoneLine, freeLots, holidayNote, moveBy, moveByICS } from './zone.js?v=park-v10';
-import { MARKERS, LOTS } from './zones.js?v=park-v10';
+import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, guideWatch, screenKeeper, placeLabel, nearby, fixTime, STATE } from './detector.js?v=park-v11';
+import { LANDMARKS } from './landmarks.js?v=park-v11';
+import { zoneAt, zoneLine, freeLots, holidayNote, moveBy, moveByICS } from './zone.js?v=park-v11';
+import { MARKERS, LOTS } from './zones.js?v=park-v11';
 const awake = screenKeeper(navigator, document);
 // Apple Maps ships on every iPhone, iPad and Mac, so those get its walking route.
 const APPLE = /iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent);
@@ -304,15 +308,28 @@ const det = new ParkingDetector({}, ev => {
 /* A stop waiting on the walk-away rule is invisible on the card, which goes on reading
    "Not recorded yet" or the spot from before the drive; and stopping tracking used to
    throw it away. Say it is pending, and let a tap keep it (probe, 2026-11-20). */
+/* A locked screen stops a page's location, so the commonest gap of all is the one right
+   after parking. The detector cannot vouch for a stop across it and never saves one by
+   itself; it used to discard it silently, leaving the spot from before the drive on the
+   card. Now it is offered to keep or dismiss (probe, 2026-11-22). */
 function paintPending(){
-  const c = det.candidate, box = $('pending');
+  const c = det.candidate || det.unconfirmed, box = $('pending');
   box.hidden = !c;
+  $('btn-dismiss').hidden = !det.unconfirmed || !!det.candidate;
   if (!c) return;
   const last = det.fixes[det.fixes.length - 1];
   const away = last ? Math.round(haversine(c.fix, last)) : 0;
   const at = new Date(c.atMs).toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'});
-  $('pending-msg').textContent = `Your ${c.mode} stopped at ${at}. It saves itself once you walk `
-    + `${det.o.walkAwayM} m away (${away} m so far) — keep this page open, or save it now.`;
+  if (c === det.candidate) {
+    $('pending-msg').textContent = `Your ${c.mode} stopped at ${at}. It saves itself once you walk `
+      + `${det.o.walkAwayM} m away (${away} m so far) — keep this page open, or save it now.`;
+    $('btn-settle').textContent = 'Save it now';
+  } else {
+    $('pending-msg').textContent = `Your ${c.mode} stopped at ${at}, then this phone sent no location `
+      + `for ${Math.round(c.gapMs / 60000)} min (screen locked?), so it could not confirm the ${c.mode} `
+      + `stayed there. You are ${away} m from that stop. Save it as your spot?`;
+    $('btn-settle').textContent = 'Save it';
+  }
 }
 
 /* ---------- storage ---------- */
@@ -386,6 +403,7 @@ function paint(){
     `${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`,
     p.accuracy != null ? `±${Math.round(p.accuracy)} m fix` : null,
     p.walkedAwayM != null ? `confirmed after ${p.walkedAwayM} m on foot`
+      : p.gapMs ? `saved by you across a ${Math.round(p.gapMs / 60000)} min GPS gap`
       : p.settledAwayM != null ? 'saved by you where the drive stopped' : 'marked by hand',
     heading != null ? 'arrow follows your phone' : 'arrow is north-up',
   ].filter(Boolean);
@@ -549,6 +567,7 @@ function requestHeading(){
 /* ---------- actions ---------- */
 $('btn-track').onclick = () => (watchId == null ? startTracking() : stopTracking());
 $('btn-settle').onclick = () => { if (det.settle(Date.now())) banner('Saved where your drive stopped.'); };
+$('btn-dismiss').onclick = () => { if (det.dismiss()) addLog('cancel', 'Unconfirmed stop dismissed'); paintPending(); };
 $('btn-guide').onclick = () => (guideStop ? stopGuide() : startGuide(true));
 
 let marking = false;

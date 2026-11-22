@@ -933,5 +933,43 @@ console.log('\n15. a falsy-but-real accuracy survives, and the drive state is cl
   check('settle clears the peak speed too', d.peakSpeed === 0);
 }
 
+console.log('\n15. a stop voided by a data hole is kept as unconfirmed, never auto-saved (2026-11-22)');
+{
+  // The phone locks at the stop (a page's location stops with the screen); 20 min later
+  // it wakes 300 m away on foot. 3c pins that this is not a park; here, what is left of it.
+  const hole = (after = []) => {
+    const f = trace([{ speed: 13, seconds: 300, bearing: 90 }, { speed: 0, seconds: 30 }]);
+    const last = f.at(-1), far = offset(last, 300, 45);
+    f.push({ ...far, t: last.t + 20 * 60_000, accuracy: 10, speed: 1.4 });
+    f.push({ ...far, t: last.t + 21 * 60_000, accuracy: 10, speed: 1.4 });
+    for (const [s, v] of after) f.push({ ...offset(far, v * s, 0), t: last.t + 21 * 60_000 + s * 1000, accuracy: 10, speed: v });
+    return { f, ...run(f) };
+  };
+  const { d, events, parks } = hole();
+  const stop = events.find(e => e.type === 'candidate')?.at.fix;
+  check('setup: no park across the hole, the candidate closed', parks.length === 0 && d.candidate === null && stop);
+  check('the voided stop is kept as unconfirmed, at the stop point',
+    d.unconfirmed && d.unconfirmed.fix === stop && d.unconfirmed.mode === 'car', JSON.stringify(d.unconfirmed));
+  check('... with the length of the hole', d.unconfirmed?.gapMs >= 20 * 60_000 && d.unconfirmed?.gapMs < 21 * 60_000, String(d.unconfirmed?.gapMs));
+  check('the gap cancel event carries it', events.some(e => e.type === 'cancel' && e.unconfirmed === d.unconfirmed));
+  check('nothing was saved on its own', d.parked === null);
+  const got = d.settle(d.fixes.at(-1).t + 1000);
+  check('settle keeps the unconfirmed stop at the stop point, not where you stand',
+    got && got.lat === stop.lat && got.lon === stop.lon && got.atMs === stop.t, JSON.stringify(got));
+  check('... flagged with its gap, 300 m from you', got?.gapMs === d.parked?.gapMs && got.gapMs >= 20 * 60_000 && Math.abs(got.settledAwayM - 300) <= 2, JSON.stringify(got));
+  check('... and is then gone', d.unconfirmed === null);
+  const x = hole().d;
+  check('dismiss drops it and says so; a second dismiss has nothing', x.dismiss() === true && x.unconfirmed === null && x.dismiss() === false && x.parked === null);
+  check('a settled ordinary candidate has no gap', run(trace([{ speed: 13, seconds: 120 }, { speed: 0, seconds: 20 }])).d.settle(T0 + 999_999)?.gapMs === null);
+  // Driving again after the hole: you are in the car, so the old stop is not where it is.
+  const drove = hole(Array.from({ length: 40 }, (_, i) => [i + 1, 13])).d;
+  check('a real drive after the hole drops it', drove.unconfirmed === null);
+  const blip = hole(Array.from({ length: 10 }, (_, i) => [i + 1, 13])).d;
+  check('... but 10 s of vehicular speed (under minMovingMs) does not', blip.unconfirmed !== null);
+  const parkedAgain = hole([...Array.from({ length: 40 }, (_, i) => [i + 1, 13]), ...Array.from({ length: 6 }, (_, i) => [41 + i, 0]), ...Array.from({ length: 120 }, (_, i) => [47 + i, 1.4])]);
+  check('setup: a new drive after the hole parks on its own', parkedAgain.parks.length === 1);
+  check('... and leaves no stale unconfirmed stop', parkedAgain.d.unconfirmed === null);
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

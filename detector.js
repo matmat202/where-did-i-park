@@ -270,6 +270,7 @@ export class ParkingDetector {
     this.movingSinceMs = null;
     this.lastVehicularFix = null;
     this.candidate = null;    // {fix, atMs, mode}
+    this.unconfirmed = null;  // a candidate a data hole voided: {fix, atMs, mode, gapMs}
     this.parked = null;       // confirmed {lat, lon, atMs, accuracy, mode}
     this.peakSpeed = 0;
     this.rejected = 0;
@@ -324,6 +325,9 @@ export class ParkingDetector {
     if (vehicular) {
       this.lastVehicularFix = fix;
       if (this.movingSinceMs === null) this.movingSinceMs = fix.t;
+      // Driving again for real after the hole: you are in the vehicle, so the stop before
+      // the hole is not where it is. One noisy fix is not a drive, hence minMovingMs.
+      if (this.unconfirmed && fix.t - this.movingSinceMs >= this.o.minMovingMs) this.unconfirmed = null;
       // Resuming vehicular motion invalidates any pending stop — red light, not parking.
       if (this.candidate) {
         this.onEvent({ type: 'cancel', reason: 'resumed vehicular motion', t: fix.t });
@@ -352,6 +356,7 @@ export class ParkingDetector {
         atMs: this.lastVehicularFix.t,
         mode: this.peakSpeed >= this.o.vehicularSpeed ? 'car' : 'bike',
       };
+      this.unconfirmed = null;
       this.onEvent({ type: 'candidate', at: this.candidate, t: fix.t });
     }
 
@@ -360,10 +365,15 @@ export class ParkingDetector {
       const away = haversine(this.candidate.fix, fix);
       const gap = prev ? fix.t - prev.t : 0;
       if (gap > this.o.maxFixGapMs) {
+        // The phone locking right after you park is the commonest hole of all (a page's
+        // location stops with the screen), so the stop is not thrown away: it is kept as
+        // unconfirmed, never auto-saved, for the person to keep or dismiss.
+        this.unconfirmed = { ...this.candidate, gapMs: gap };
         this.onEvent({
           type: 'cancel',
           reason: `gap of ${Math.round(gap / 60000)} min in fixes — cannot vouch for it`,
           t: fix.t,
+          unconfirmed: this.unconfirmed,
         });
         // Everything learned before the hole is now untrustworthy. Clearing the
         // candidate alone is not enough: a stale lastVehicularFix would let the very
@@ -386,6 +396,7 @@ export class ParkingDetector {
         };
         this.onEvent({ type: 'park', at: this.parked, t: fix.t });
         this.candidate = null;
+        this.unconfirmed = null;
         this.movingSinceMs = null;
         this.lastVehicularFix = null;
         this.peakSpeed = 0;
@@ -395,9 +406,10 @@ export class ParkingDetector {
 
   /** Keep the stop that is still waiting on the walk-away rule: the person tapped "save
    *  it now", or stopped tracking. Without this an open candidate died with the watch,
-   *  and the page went on showing the spot from before the drive. Null if none is open. */
+   *  and the page went on showing the spot from before the drive. Null if none is open.
+   *  With no open candidate it keeps the unconfirmed one, if a data hole left one. */
   settle(t) {
-    const c = this.candidate;
+    const c = this.candidate || this.unconfirmed;
     if (!c) return null;
     const last = this.fixes[this.fixes.length - 1];
     this.parked = {
@@ -409,15 +421,20 @@ export class ParkingDetector {
       confirmedAtMs: t,
       walkedAwayM: null,
       settledAwayM: last ? Math.round(haversine(c.fix, last)) : 0,
+      gapMs: c === this.unconfirmed ? c.gapMs : null,
     };
     // Cleared before the event, so a listener repainting from it sees no open stop.
     this.candidate = null;
+    this.unconfirmed = null;
     this.movingSinceMs = null;
     this.lastVehicularFix = null;
     this.peakSpeed = 0;
     this.onEvent({ type: 'park', at: this.parked, t, settled: true });
     return this.parked;
   }
+
+  /** "Not where I parked": drop the stop a data hole left unconfirmed. */
+  dismiss() { const had = !!this.unconfirmed; this.unconfirmed = null; return had; }
 
   /** Where is it, and which way do I walk? */
   guidance(from) {
