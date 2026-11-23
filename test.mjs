@@ -971,5 +971,44 @@ console.log('\n15. a stop voided by a data hole is kept as unconfirmed, never au
   check('... and leaves no stale unconfirmed stop', parkedAgain.d.unconfirmed === null);
 }
 
+console.log('\n16. the two boundaries section 15 straddled but never stood on (2026-11-23)');
+{
+  // bin/mutwatch had `>= -> >` on the minMovingMs test and `60000 -> 60001` on the rendered
+  // gap as survivors. Section 15 drives 40 s and blips 10 s -- either side of minMovingMs,
+  // never ON it -- and checks gapMs in milliseconds, never the string a person reads. Both
+  // mutants are real defects, not equivalents: /60001 turns a 15.5 min hole into "15 min".
+  const holeOf = (gapMs, after = []) => {
+    const f = trace([{ speed: 13, seconds: 300, bearing: 90 }, { speed: 0, seconds: 30 }]);
+    const last = f.at(-1), far = offset(last, 300, 45);
+    f.push({ ...far, t: last.t + gapMs, accuracy: 10, speed: 1.4 });
+    for (const [s, v] of after) f.push({ ...offset(far, v * s, 0), t: last.t + gapMs + s * 1000, accuracy: 10, speed: v });
+    return run(f);
+  };
+  const minsIn = (gapMs) => holeOf(gapMs).events.find(e => e.type === 'cancel' && /gap of/.test(e.reason))?.reason;
+  // Math.round is half-UP, so a hole of exactly 15.5 min reads 16, and 20.5 reads 21.
+  check('a 15.5 min hole reads "16 min", not 15', minsIn(930_000) === 'gap of 16 min in fixes — cannot vouch for it', String(minsIn(930_000)));
+  check('a 20.5 min hole reads "21 min", not 20', minsIn(1_230_000) === 'gap of 21 min in fixes — cannot vouch for it', String(minsIn(1_230_000)));
+  check('a 16 min hole still reads "16 min"', minsIn(960_000) === 'gap of 16 min in fixes — cannot vouch for it', String(minsIn(960_000)));
+
+  // Resuming vehicular motion drops the unconfirmed stop the moment the drive has lasted
+  // minMovingMs -- exactly that, not a fix later. Asserted as the property rather than as a
+  // magic fix count: find the first drive length that clears it, then show the fix that did
+  // sits exactly minMovingMs after movingSinceMs. Under `>` the clearing fix is one second
+  // late and that equality fails, which is the whole point.
+  let cleared = null;
+  for (let nAfter = 1; nAfter <= 60 && cleared === null; nAfter++) {
+    const d = holeOf(20 * 60_000, Array.from({ length: nAfter }, (_, i) => [i + 1, 13])).d;
+    if (d.unconfirmed === null) cleared = { nAfter, d };
+  }
+  check('setup: driving again after the hole does eventually clear it', cleared !== null);
+  check('the fix that cleared it sits exactly minMovingMs after the drive began',
+    cleared && cleared.d.fixes.at(-1).t - cleared.d.movingSinceMs === DEFAULTS.minMovingMs,
+    cleared ? String(cleared.d.fixes.at(-1).t - cleared.d.movingSinceMs) : 'never cleared');
+  const justShort = cleared && holeOf(20 * 60_000, Array.from({ length: cleared.nAfter - 1 }, (_, i) => [i + 1, 13])).d;
+  check('... and one fix earlier, a second short of it, it is still there',
+    justShort && justShort.unconfirmed !== null,
+    justShort ? String(justShort.fixes.at(-1).t - justShort.movingSinceMs) : 'n/a');
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);
