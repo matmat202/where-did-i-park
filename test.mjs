@@ -896,7 +896,7 @@ console.log('\n14. a stop still waiting on the walk-away rule can be kept (settl
   check('page: stopTracking settles an open stop before the watch is dropped',
     /det\.settle\(/.test(stopBody) && stopBody.indexOf('det.settle(') < stopBody.indexOf('watchId = null'));
   check('page: the pending box, its save button, and paint() repaints it',
-    /id="pending"/.test(html) && /\$\('btn-settle'\)\.onclick = \(\) => \{ if \(det\.settle\(/.test(html) && /function paint\(\)\{\n  paintPending\(\);/.test(html));
+    /id="pending"/.test(html) && /\$\('btn-settle'\)\.onclick = \(\) => \{[^}]*if \(det\.settle\(/.test(html) && /function paint\(\)\{\n  paintPending\(\);/.test(html));
 }
 
 console.log('\n15. a falsy-but-real accuracy survives, and the drive state is cleared (2026-11-21)');
