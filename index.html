@@ -313,14 +313,20 @@ const det = new ParkingDetector({}, ev => {
    itself; it used to discard it silently, leaving the spot from before the drive on the
    card. Now it is offered to keep or dismiss (probe, 2026-11-22). */
 function paintPending(){
+  keepPending();
   const c = det.candidate || det.unconfirmed, box = $('pending');
   box.hidden = !c;
   $('btn-dismiss').hidden = !det.unconfirmed || !!det.candidate;
   if (!c) return;
-  const last = det.fixes[det.fixes.length - 1];
+  const last = det.fixes[det.fixes.length - 1] || here;   // a reopened page has no fixes yet
   const away = last ? Math.round(haversine(c.fix, last)) : 0;
   const at = new Date(c.atMs).toLocaleTimeString('en-US', {hour:'numeric', minute:'2-digit'});
-  if (c === det.candidate) {
+  if (c.restored) {
+    $('pending-msg').textContent = `Your ${c.mode} stopped at ${at}, then this page was closed before `
+      + `it could confirm the park (a phone closes pages left in the background). `
+      + (last ? `You are ${away} m from that stop. ` : '') + 'Save it as your spot?';
+    $('btn-settle').textContent = 'Save it';
+  } else if (c === det.candidate) {
     $('pending-msg').textContent = `Your ${c.mode} stopped at ${at}. It saves itself once you walk `
       + `${det.o.walkAwayM} m away (${away} m so far) — keep this page open, or save it now.`;
     $('btn-settle').textContent = 'Save it now';
@@ -330,6 +336,30 @@ function paintPending(){
       + `stayed there. You are ${away} m from that stop. Save it as your spot?`;
     $('btn-settle').textContent = 'Save it';
   }
+}
+
+/* The detector lives in memory, and iOS discards a page left in the background: the stop
+   waiting on the walk-away rule (or on a locked screen's answer) died with the tab, and
+   the reopened page showed the spot from before the drive. So the open stop is mirrored to
+   storage, and a page that opens without one in memory offers it back as unconfirmed:
+   nothing vouched for the car across the close, so it is asked, never saved on its own. */
+const PKEY = 'park-finder/pending', PEND_MAX_MS = 24 * 3600_000;
+let pendSig;
+function keepPending(){
+  const c = det.candidate || det.unconfirmed, last = det.fixes[det.fixes.length - 1];
+  const s = c ? JSON.stringify({ fix: {lat:c.fix.lat, lon:c.fix.lon, accuracy:c.fix.accuracy ?? null},
+    atMs: c.atMs, mode: c.mode, lastMs: Math.max(c.atMs, last ? last.t : 0) }) : null;
+  if (s === pendSig) return;
+  pendSig = s;
+  try { s ? localStorage.setItem(PKEY, s) : localStorage.removeItem(PKEY); } catch {}
+}
+function restorePending(now = Date.now()){
+  let r = null;
+  try { r = JSON.parse(localStorage.getItem(PKEY) || 'null'); } catch {}
+  if (!r?.fix || det.candidate || det.unconfirmed) return;
+  const p = load();
+  if ((p && p.atMs >= r.atMs) || now - r.atMs > PEND_MAX_MS) return;   // answered, or too old to ask
+  det.unconfirmed = { fix: r.fix, atMs: r.atMs, mode: r.mode, gapMs: Math.max(0, now - r.lastMs), restored: true };
 }
 
 /* ---------- storage ---------- */
@@ -693,8 +723,9 @@ function refreshFree(){
 }
 const fresh = () => { if (load()) paint(); refreshFree(); };
 
+restorePending();
 paint();
-if (load() && navigator.permissions) navigator.permissions.query({name:'geolocation'})
+if ((load() || det.unconfirmed) && navigator.permissions) navigator.permissions.query({name:'geolocation'})
   .then(s => { if (s.state === 'granted') startGuide(false); }).catch(() => {});
 setInterval(fresh, 30_000);   // keep "x min ago" honest, and the free list with it
 document.addEventListener('visibilitychange', () => { if (!document.hidden) fresh(); });
