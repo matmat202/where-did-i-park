@@ -273,10 +273,10 @@ a{color:var(--link)}
 </div>
 
 <script type="module">
-import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, guideWatch, screenKeeper, placeLabel, nearby, fixTime, STATE } from './detector.js?v=park-v11';
-import { LANDMARKS } from './landmarks.js?v=park-v11';
-import { zoneAt, zoneLine, freeLots, holidayNote, moveBy, moveByICS } from './zone.js?v=park-v11';
-import { MARKERS, LOTS } from './zones.js?v=park-v11';
+import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, guideWatch, screenKeeper, placeLabel, nearby, fixTime, STATE } from './detector.js?v=park-v13';
+import { LANDMARKS } from './landmarks.js?v=park-v13';
+import { zoneAt, zoneLine, freeLots, holidayNote, moveBy, moveByICS, freeNext } from './zone.js?v=park-v13';
+import { MARKERS, LOTS } from './zones.js?v=park-v13';
 const awake = screenKeeper(navigator, document);
 // Apple Maps ships on every iPhone, iPad and Mac, so those get its walking route.
 const APPLE = /iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent);
@@ -647,23 +647,29 @@ function paintFree(at){
   const ul = $('free');
   ul.hidden = false;
   if (!rows.length){
-    ul.replaceChildren(Object.assign(document.createElement('li'), {textContent: rows.nearby
-      ? `Nothing free right now: all ${rows.nearby} mapped lots within 1.5 km are enforced (visitor spaces are paid).`
-      : 'No mapped Stanford lot within 1.5 km of you.'}));
+    const msg = text => Object.assign(document.createElement('li'), {className:'msg', textContent:text});
+    if (!rows.nearby){ ul.replaceChildren(msg('No mapped Stanford lot within 1.5 km of you.')); return; }
+    // "Nothing free" was the whole answer at 10 am; the next question is always "when, then?"
+    const nx = freeNext(at, { lots: LOTS });
+    ul.replaceChildren(msg(`Nothing free right now: all ${rows.nearby} mapped lots within 1.5 km are enforced (visitor spaces are paid).`),
+      ...(nx ? [msg(`From ${nx.label}, ${nx.count === 1 ? '1 lot frees up' : `${nx.count} lots free up`}${nx.rows.length < nx.count ? '; the nearest:' : ':'}`),
+                ...nx.rows.map(freeRow)] : []));
     return;
   }
-  ul.replaceChildren(...rows.map(r => {
-    const li = document.createElement('li');
-    const name = r.lot || placeLabel(r, LANDMARKS, { maxM: 250 }) || 'unnamed lot';
-    const link = Object.assign(document.createElement('a'), {href: walkLink(r, APPLE)
-      .replace('mode=walking', 'mode=driving').replace('travelmode=walking', 'travelmode=driving'),
-      target:'_blank', rel:'noopener', textContent:'directions'});
-    li.append(
-      Object.assign(document.createElement('span'), {className:'m', textContent: r.m >= 1000 ? `${(r.m/1000).toFixed(1)} km` : `${r.m} m`}),
-      Object.assign(document.createElement('span'), {className:'where', textContent:`${name} · ${r.kind} ${r.text.replace(' (university holiday)', '')}`}),   // the holiday line above says it once
-      link);
-    return li;
-  }));
+  ul.replaceChildren(...rows.map(freeRow));
+}
+
+function freeRow(r){
+  const li = document.createElement('li');
+  const name = r.lot || placeLabel(r, LANDMARKS, { maxM: 250 }) || 'unnamed lot';
+  const link = Object.assign(document.createElement('a'), {href: walkLink(r, APPLE)
+    .replace('mode=walking', 'mode=driving').replace('travelmode=walking', 'travelmode=driving'),
+    target:'_blank', rel:'noopener', textContent:'directions'});
+  li.append(
+    Object.assign(document.createElement('span'), {className:'m', textContent: r.m >= 1000 ? `${(r.m/1000).toFixed(1)} km` : `${r.m} m`}),
+    Object.assign(document.createElement('span'), {className:'where', textContent:`${name} · ${r.kind} ${r.text.replace(' (university holiday)', '')}`}),   // the holiday line above says it once
+    link);
+  return li;
 }
 
 let finding = false;

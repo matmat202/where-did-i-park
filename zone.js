@@ -16,7 +16,7 @@
  * in the shared ones, so this file does not promise them.
  * Times are Stanford's (America/Los_Angeles) whatever zone the phone is in.
  */
-import { haversine } from './detector.js?v=park-v11';   // ?v= must match sw.js VERSION: see sw.js
+import { haversine } from './detector.js?v=park-v13';   // ?v= must match sw.js VERSION: see sw.js
 
 /** Stanford university holidays (Stanford dates), and the winter closure around them. */
 export const HOLIDAYS = new Map([
@@ -198,6 +198,28 @@ export function freeLots(p, { lots, shared = SHARED }, date = new Date(), { maxM
   }
   rows.sort((a, b) => a.m - b.m).splice(limit);
   return rows;
+}
+
+/**
+ * The answer for when freeLots() is empty: the first whole Stanford hour within `withinH`
+ * hours at which some mapped lot near `p` is free -> { at, label, rows, count }, e.g. at
+ * 10 am on a weekday { label: '4 pm today', rows: the nearest `limit` lots then, count: all
+ * of them }. Null when something is free already, or when nothing frees in time (off
+ * campus). Every rule edge is a whole hour and Stanford's UTC offset is a whole number of
+ * hours, so probing whole UTC hours cannot step over an edge.
+ */
+export function freeNext(p, ctx, date = new Date(), { withinH = 24, limit = 5, maxM = 1500 } = {}) {
+  if (freeLots(p, ctx, date, { maxM }).length) return null;
+  const today = stanfordClock(date).ymd;
+  for (let h = 1; h <= withinH; h++) {
+    const at = new Date((Math.floor(+date / 36e5) + h) * 36e5);
+    const all = freeLots(p, ctx, at, { maxM, limit: Infinity });
+    if (!all.length) continue;
+    const c = stanfordClock(at), k = Math.round((Date.parse(c.ymd) - Date.parse(today)) / 864e5);
+    const when = k === 0 ? 'today' : k === 1 ? 'tomorrow' : DAY[c.day];
+    return { at, label: `${clockLabel(c.hour)} ${when}`, rows: all.slice(0, limit), count: all.length };
+  }
+  return null;
 }
 
 /**

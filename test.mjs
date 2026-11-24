@@ -6,7 +6,7 @@
  */
 import { ParkingDetector, haversine, bearing, headingFrom, turnTo, walkLink, sampleBestFix, guideWatch, screenKeeper, placeLabel, nearby, fixTime, DEFAULTS } from './detector.js';
 import { LANDMARKS } from './landmarks.js';
-import { zoneAt, zoneLine, ruleNow, stanfordClock, RULES, SHARED, hoursFree, freeLots, holidayNote, HOLIDAYS, moveBy, moveByICS } from './zone.js';
+import { zoneAt, zoneLine, ruleNow, stanfordClock, RULES, SHARED, hoursFree, freeLots, freeNext, holidayNote, HOLIDAYS, moveBy, moveByICS } from './zone.js';
 import { MARKERS, LOTS } from './zones.js';
 
 const ORIGIN = { lat: 37.4275, lon: -122.1697 };   // Stanford-ish
@@ -707,6 +707,23 @@ console.log('\n12. thresholds stood on exactly, and the median (bin/mutate survi
   check('freeLots: bad coords -> []', freeLots({ lat: NaN, lon: 0 }, { lots: FL }).length === 0 && freeLots(null, { lots: FL }).length === 0);
   // A good lat with a bad lon must stop too: past the guard, NaN > maxM is false and every lot comes back at NaN metres.
   check('freeLots: a bad lon alone -> []', freeLots({ lat: near.lat, lon: NaN }, { lots: FL }, SAT_NOON).length === 0 && freeLots({ lat: near.lat, lon: 'x' }, { lots: FL }, SAT_NOON).length === 0);
+  // freeNext: when nothing is free, say when something will be (10 am weekday -> 4 pm).
+  const n10 = freeNext(near, { lots: FL }, MON_10AM);
+  check('freeNext: weekday 10 am -> 4 pm today, both in-range lots, nearest first',
+    n10?.label === '4 pm today' && +n10.at === Date.parse('2026-10-26T23:00:00Z') && n10.count === 2 && n10.rows.map(r => r.lot).join() === 'Close C,Garage', JSON.stringify(n10));
+  check('freeNext: the rows are read at that hour (C permit then waits for tomorrow 6 am)', n10?.rows[0].text === 'not enforced until tomorrow 6 am');
+  check('freeNext: 3:00 pm sharp is one hour off, not two', freeNext(near, { lots: FL }, at('2026-10-26T22:00:00Z'))?.label === '4 pm today');
+  check('freeNext: 3:59 pm still says 4 pm', +freeNext(near, { lots: FL }, at('2026-10-26T22:59:59Z'))?.at === Date.parse('2026-10-26T23:00:00Z'));
+  check('freeNext: null while something is free', freeNext(near, { lots: FL }, SAT_NOON) === null && freeNext(near, { lots: FL }, MON_7AM) === null);
+  check('freeNext: limit and count are separate', (r => r?.rows.length === 1 && r.count === 2)(freeNext(near, { lots: FL }, MON_10AM, { limit: 1 })));
+  check('freeNext: nothing within withinH -> null', freeNext(near, { lots: FL }, MON_10AM, { withinH: 5 }) === null && freeNext(near, { lots: FL }, MON_10AM, { withinH: 6 }) !== null);
+  check('freeNext: off campus -> null', freeNext({ lat: 37.0, lon: -122.0 }, { lots: FL }, MON_10AM) === null);
+  check('freeNext: an Oval-only lot at 5 pm frees at 6 pm', freeNext(near, { lots: [['O', 'Oval', [sq(37.4302, -122.1702)]]] }, MON_5PM)?.label === '6 pm today');
+  // The Wednesday before Thanksgiving: free from 4 pm, and the row says until Monday.
+  const wedTg = freeNext(near, { lots: FL }, at('2026-11-25T18:00:00Z'));
+  check('freeNext: Wed before Thanksgiving frees at 4 pm until Mon 6 am', wedTg?.label === '4 pm today' && wedTg.rows[0].text === 'not enforced until Mon 6 am', JSON.stringify(wedTg?.rows[0]));
+  const realNext = freeNext({ lat: 37.4275, lon: -122.1697 }, real, MON_10AM);
+  check('freeNext: real data from the Quad at 10 am frees at 4 pm, several lots', realNext?.label === '4 pm today' && realNext.count >= 5 && realNext.rows.length === 5);
   check('freeLots: limit caps the list', freeLots(near, { lots: FL }, SAT_NOON, { limit: 1 }).length === 1);
   const quad = { lat: 37.4275, lon: -122.1697 };
   const realSat = freeLots(quad, real, SAT_NOON);
