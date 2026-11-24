@@ -654,6 +654,18 @@ console.log('\n12. thresholds stood on exactly, and the median (bin/mutate survi
     && ics.includes('TRIGGER:-PT30M') && ics.startsWith('BEGIN:VCALENDAR\r\n') && ics.endsWith('END:VCALENDAR\r\n')
     && !/[^\r]\n/.test(ics));
   check('moveByICS: commas in the summary are escaped', moveByICS({ ...mbC, kind: 'A, C permit' }, { lat: 1, lon: 2 }).includes('A\\, C permit'));
+  // Coordinate precision is five decimals (~1 m) in all three places the spot appears. Exact
+  // strings on purpose: a regex like /GEO:37\.4/ passes at any precision, so it would not notice
+  // toFixed(5) becoming toFixed(6) — a mutant that survived here until 2026-11-24. The sixth
+  // decimal of this spot is non-zero in both lat and lon, so 5 vs 6 cannot read the same.
+  const icsP = moveByICS(mbC, { lat: 37.427513, lon: -122.169736 }, at('2026-10-25T00:00:00Z'));
+  check('moveByICS: GEO is lat;lon at exactly five decimals',
+    icsP.includes('\r\nGEO:37.42751;-122.16974\r\n'), icsP.split('\r\n').find(l => l.startsWith('GEO:')));
+  check('moveByICS: LOCATION is lat,lon at five decimals, comma escaped',
+    icsP.includes('\r\nLOCATION:37.42751\\,-122.16974\r\n'), icsP.split('\r\n').find(l => l.startsWith('LOCATION:')));
+  check('moveByICS: the UID digits are the five-decimal coordinates',
+    icsP.includes('\r\nUID:20261026T060000-374275112216974@where-did-i-park\r\n'),
+    icsP.split('\r\n').find(l => l.startsWith('UID:')));
 
   // The real bundled data.
   check('zones.js: markers well-formed, all four kinds present',
